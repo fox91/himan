@@ -59,6 +59,8 @@ time_series::iterator& time_series::iterator::Next()
 template <class InputIt>
 std::shared_ptr<himan::info> Max(InputIt begin, InputIt end)
 {
+	if (begin == end) return nullptr;
+
 	// Find first field that contains data
 	while (*begin == nullptr)
 	{
@@ -70,8 +72,6 @@ std::shared_ptr<himan::info> Max(InputIt begin, InputIt end)
 	auto maxInfo = *begin;
 	maxInfo->ReGrid();
 	++begin;
-
-	std::cout << VEC(maxInfo).size() << std::endl;
 
 	// Update set of maximum values
 	for (; begin != end; ++begin)
@@ -91,6 +91,7 @@ std::shared_ptr<himan::info> Max(InputIt begin, InputIt end)
 template std::shared_ptr<himan::info> Max<time_series::iterator>(time_series::iterator, time_series::iterator);
 template std::shared_ptr<himan::info> Max<std::vector<std::shared_ptr<himan::info>>::iterator>(
     std::vector<std::shared_ptr<himan::info>>::iterator, std::vector<std::shared_ptr<himan::info>>::iterator);
+
 /*
  * Finds the minimum values for a series of info_t on the interval [begin,end)
  * */
@@ -98,6 +99,8 @@ template std::shared_ptr<himan::info> Max<std::vector<std::shared_ptr<himan::inf
 template <class InputIt>
 std::shared_ptr<himan::info> Min(InputIt begin, InputIt end)
 {
+	if (begin == end) return nullptr;
+
 	while (*begin == nullptr)
 	{
 		++begin;

@@ -36,7 +36,7 @@ class time_series
 			return (itsForecastTime == other.itsForecastTime && itsLevel == other.itsLevel);
 		}
 		bool operator!=(iterator other) const { return !(*this == other); }
-		std::shared_ptr<himan::info> operator*() const { return itsInfo; }
+		const std::shared_ptr<himan::info>& operator*() const { return itsInfo; }
 	   private:
 		iterator& Next();
 		std::shared_ptr<himan::plugin::fetcher> f;
@@ -66,7 +66,7 @@ class time_series
 };
 
 // TODO these functions are independent of the implementation of the generator class but are example use cases.
-// They should be moved to some other namespace, e.g. nuerical functions, util, modifier, etc.
+// They should be moved to some other namespace, e.g. numerical functions, util, modifier, etc.
 template <class InputIt>
 std::shared_ptr<himan::info> Max(InputIt, InputIt);
 
