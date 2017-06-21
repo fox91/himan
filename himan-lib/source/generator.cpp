@@ -80,7 +80,10 @@ std::shared_ptr<himan::info> Max(InputIt begin, InputIt end)
 
 		auto in = VEC((*begin)).begin();
 		auto out = VEC(maxInfo).begin();
-		for (; in != VEC((*begin)).end(), out != VEC(maxInfo).end(); ++in, ++out)
+		auto inEnd = VEC((*begin)).end();
+		auto outEnd = VEC(maxInfo).end();
+
+		for (; in != inEnd, out != outEnd; ++in, ++out)
 		{
 			*out = std::max(*in, *out);
 		}
@@ -116,7 +119,10 @@ std::shared_ptr<himan::info> Min(InputIt begin, InputIt end)
 
 		auto in = VEC((*begin)).begin();
 		auto out = VEC(minInfo).begin();
-		for (; out != VEC((*begin)).end(), out != VEC(minInfo).end(); ++in, ++out)
+		auto inEnd = VEC((*begin)).end();
+		auto outEnd = VEC(minInfo).end();
+
+		for (; out != inEnd, out != outEnd; ++in, ++out)
 		{
 			*out = std::min(*in, *out);
 		}
