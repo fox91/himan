@@ -115,14 +115,14 @@ class level_series
 
 // TODO these functions are independent of the implementation of the generator class but are example use cases.
 // They should be moved to some other namespace, e.g. numerical functions, util, modifier, etc.
-template <class InputIt>
-std::shared_ptr<himan::info> Max(InputIt, InputIt);
+template <class RngExpr>
+std::shared_ptr<himan::info> Max(RngExpr);
 
-template <class InputIt>
-std::shared_ptr<himan::info> Min(InputIt, InputIt);
+template <class RngExpr>
+std::shared_ptr<himan::info> Min(RngExpr);
 
-template <class InputIt>
-std::shared_ptr<himan::info> Value(InputIt, InputIt, InputIt, InputIt, double);
+template <class RngExpr>
+std::shared_ptr<himan::info> Value(RngExpr, RngExpr, double);
 
 }  // namespace himan
 

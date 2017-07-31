@@ -104,9 +104,12 @@ level_series::iterator& level_series::iterator::Next()
  * Finds the maximum values for a series of info_t on the interval [begin,end)
  * */
 
-template <class InputIt>
-std::shared_ptr<himan::info> Max(InputIt begin, InputIt end)
+template <class RngExpr>
+std::shared_ptr<himan::info> Max(RngExpr value)
 {
+	auto begin = value.begin();
+	auto end = value.end();
+
 	if (begin == end) return nullptr;
 
 	// Find first field that contains data
@@ -139,18 +142,20 @@ std::shared_ptr<himan::info> Max(InputIt begin, InputIt end)
 
 	return maxInfo;
 }
-template std::shared_ptr<himan::info> Max<time_series::iterator>(time_series::iterator, time_series::iterator);
-template std::shared_ptr<himan::info> Max<level_series::iterator>(level_series::iterator, level_series::iterator);
-template std::shared_ptr<himan::info> Max<std::vector<std::shared_ptr<himan::info>>::iterator>(
-    std::vector<std::shared_ptr<himan::info>>::iterator, std::vector<std::shared_ptr<himan::info>>::iterator);
+template std::shared_ptr<himan::info> Max<time_series>(time_series);
+template std::shared_ptr<himan::info> Max<level_series>(level_series);
+template std::shared_ptr<himan::info> Max<std::vector<std::shared_ptr<himan::info>>>(std::vector<std::shared_ptr<himan::info>>);
 
 /*
  * Finds the minimum values for a series of info_t on the interval [begin,end)
  * */
 
-template <class InputIt>
-std::shared_ptr<himan::info> Min(InputIt begin, InputIt end)
+template <class RngExpr>
+std::shared_ptr<himan::info> Min(RngExpr value)
 {
+	auto begin = value.begin();
+	auto end = value.end();
+
 	if (begin == end) return nullptr;
 
 	while (*begin == nullptr)
@@ -180,18 +185,23 @@ std::shared_ptr<himan::info> Min(InputIt begin, InputIt end)
 
 	return minInfo;
 }
-template std::shared_ptr<himan::info> Min<time_series::iterator>(time_series::iterator, time_series::iterator);
-template std::shared_ptr<himan::info> Min<level_series::iterator>(level_series::iterator, level_series::iterator);
-template std::shared_ptr<himan::info> Min<std::vector<std::shared_ptr<himan::info>>::iterator>(
-    std::vector<std::shared_ptr<himan::info>>::iterator, std::vector<std::shared_ptr<himan::info>>::iterator);
+template std::shared_ptr<himan::info> Min<time_series>(time_series);
+template std::shared_ptr<himan::info> Min<level_series>(level_series);
+template std::shared_ptr<himan::info> Min<std::vector<std::shared_ptr<himan::info>>>(std::vector<std::shared_ptr<himan::info>>);
 
 /*
  * Finds value at given height. Interpolates between levels if needed.
  * */
 
-template <class InputIt>
-std::shared_ptr<himan::info> Value(InputIt beginValue, InputIt endValue, InputIt beginHeight, InputIt endHeight, double theHeight)
+template <class RngExpr>
+std::shared_ptr<himan::info> Value(RngExpr value, RngExpr height, double theHeight)
 {
+
+	auto beginValue = value.begin();
+	auto endValue = value.end();
+	auto beginHeight = height.begin();
+	auto endHeight = height.end();
+
         if (beginValue == endValue || beginHeight == endHeight) return nullptr;
 
         while (*beginValue == nullptr || *beginHeight == nullptr )
@@ -206,8 +216,6 @@ std::shared_ptr<himan::info> Value(InputIt beginValue, InputIt endValue, InputIt
 	retInfo->Data().Fill(kFloatMissing);
 
 	std::vector<double> findHeight(retInfo->Data().Size(),theHeight);
-	std::vector<bool> mask(retInfo->Data().Size());
-	std::vector<double> interp(findHeight.size());
 
 	auto prevHeightInfo = *beginHeight;
 	auto prevValueInfo = *beginValue;
@@ -216,51 +224,23 @@ std::shared_ptr<himan::info> Value(InputIt beginValue, InputIt endValue, InputIt
         {
                 if (*beginValue == nullptr || *beginHeight == nullptr) continue;
 
-		// compute mask for the interpolation step
-                auto Height = VEC((*beginHeight)).begin();
-                auto PrevHeight = VEC(prevHeightInfo).begin();
-		auto FindHeight = findHeight.begin();
+		auto Ret =  VEC((retInfo)).begin();
+                auto RetEnd =  VEC((retInfo)).end();
 
-		auto Mask = mask.begin();
-		auto MaskEnd = mask.end();
-
-		for (; Mask != MaskEnd; ++Mask, ++Height, ++FindHeight, ++PrevHeight)
-		{
-			*Mask = ((*Height <= *FindHeight) && (*PrevHeight >= *FindHeight)) || ((*Height >= *FindHeight) && (*PrevHeight <= *FindHeight));
-		}
-
-		// proceed to next level if no work is to be done for all grid points
-		if (!std::accumulate(mask.begin(),mask.end(),false))
-			continue;
-
-		// compute interpolated value for all grid points
                 auto Value = VEC((*beginValue)).begin();
                 auto PrevValue = VEC(prevValueInfo).begin();
 
-                Height = VEC((*beginHeight)).begin();
-                PrevHeight = VEC(prevHeightInfo).begin();
-                FindHeight = findHeight.begin();
-
-                auto Interp = interp.begin();
-		auto InterpEnd = interp.end();
+                auto Height = VEC((*beginHeight)).begin();
+                auto PrevHeight = VEC(prevHeightInfo).begin();
+                auto FindHeight = findHeight.begin();
 
 
-                for (;  Interp != InterpEnd; ++Value, ++Height, ++PrevValue, ++PrevHeight, ++FindHeight, ++Interp)
+                for (; Ret != RetEnd; ++Value, ++Height, ++PrevValue, ++PrevHeight, ++FindHeight, ++Ret)
                 {
-                        *Interp = (*PrevValue*(*Height-*FindHeight)+*Value*(*FindHeight-*PrevHeight))/(*Height-*PrevHeight);
-                }
+                        register bool Mask = ((*Height <= *FindHeight) && (*PrevHeight >= *FindHeight)) || ((*Height >= *FindHeight) && (*PrevHeight <= *FindHeight));
+                        register double Interp = (*PrevValue*(*Height-*FindHeight)+*Value*(*FindHeight-*PrevHeight))/(*Height-*PrevHeight);
 
-		// write interpolated value to return vector for grid points with mask value == true 
-                Interp = interp.begin();
-
-                Mask = mask.begin();
-                MaskEnd = mask.end();
-
-		auto Ret =  VEC((retInfo)).begin();
-
-                for (; Mask != MaskEnd; ++Mask, ++Interp, ++Ret)
-                {
-                        *Ret = *Mask ? *Interp : *Ret;
+                        *Ret = Mask ? Interp : *Ret;
                 }
 
 		// pass current height and value to previous height and value for next loop iteration
@@ -270,8 +250,7 @@ std::shared_ptr<himan::info> Value(InputIt beginValue, InputIt endValue, InputIt
 
         return retInfo;
 }
-template std::shared_ptr<himan::info> Value<level_series::iterator>(level_series::iterator, level_series::iterator, level_series::iterator, level_series::iterator, double);
-template std::shared_ptr<himan::info> Value<std::vector<std::shared_ptr<himan::info>>::iterator>(
-    std::vector<std::shared_ptr<himan::info>>::iterator, std::vector<std::shared_ptr<himan::info>>::iterator, std::vector<std::shared_ptr<himan::info>>::iterator, std::vector<std::shared_ptr<himan::info>>::iterator, double);
+template std::shared_ptr<himan::info> Value<level_series>(level_series, level_series, double);
+template std::shared_ptr<himan::info> Value<std::vector<std::shared_ptr<himan::info>>>(std::vector<std::shared_ptr<himan::info>>, std::vector<std::shared_ptr<himan::info>>, double);
 
 } // close namespace himan
