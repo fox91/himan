@@ -91,6 +91,8 @@ class ensemble
 	/// @brief Return all data for given ensemble member
 	info_t Forecast(size_t i);
 
+	std::vector<info_t>& Data();
+
    protected:
 	/// @brief Verifies that we have the required number of valid forecasts, else abort execution.
 	/// Outputs diagnostics.
@@ -120,6 +122,7 @@ inline std::string ensemble::ClassName() const { return "himan::ensemble"; }
 inline param ensemble::Param() const { return itsParam; }
 inline int ensemble::MaximumMissingForecasts() const { return itsMaximumMissingForecasts; }
 inline void ensemble::MaximumMissingForecasts(int maximumMissing) { itsMaximumMissingForecasts = maximumMissing; }
+inline std::vector<info_t>& ensemble::Data() {return itsForecasts;}
 }  // namespace himan
 
 // ENSEMBLE_H

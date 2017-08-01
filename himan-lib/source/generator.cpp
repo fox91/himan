@@ -1,4 +1,5 @@
 #include "generator.h"
+#include "ensemble.h"
 #include "plugin_factory.h"
 #include <numeric>
 
