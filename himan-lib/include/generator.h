@@ -18,7 +18,7 @@ namespace himan
 class time_series
 {
    public:
-	class iterator : public std::iterator<std::input_iterator_tag, std::shared_ptr<himan::info>>
+	class iterator : public std::iterator<std::input_iterator_tag, himan::matrix<double>>
 	{
 	   public:
 		explicit iterator(std::shared_ptr<const plugin_configuration> theConfiguration, himan::param theParam,
@@ -36,7 +36,7 @@ class time_series
 			return (itsForecastTime == other.itsForecastTime && itsLevel == other.itsLevel);
 		}
 		bool operator!=(iterator other) const { return !(*this == other); }
-		const std::shared_ptr<himan::info>& operator*() const { return itsInfo; }
+		himan::matrix<double> operator*() const { return itsInfo->Data(); }
 	   private:
 		iterator& Next();
 		std::shared_ptr<himan::plugin::fetcher> f;
@@ -68,7 +68,7 @@ class time_series
 class level_series
 {
    public:
-        class iterator : public std::iterator<std::input_iterator_tag, std::shared_ptr<himan::info>>
+        class iterator : public std::iterator<std::input_iterator_tag, himan::matrix<double>>
         {
            public:
                 explicit iterator(std::shared_ptr<const plugin_configuration> theConfiguration, himan::param theParam,
@@ -85,7 +85,7 @@ class level_series
                         return (itsForecastTime == other.itsForecastTime && itsLevel == other.itsLevel);
                 }
                 bool operator!=(iterator other) const { return !(*this == other); }
-                const std::shared_ptr<himan::info>& operator*() const { return itsInfo; }
+                himan::matrix<double> operator*() const { return itsInfo->Data(); }
            private:
                 iterator& Next();
                 std::shared_ptr<himan::plugin::fetcher> f;
@@ -116,13 +116,16 @@ class level_series
 // TODO these functions are independent of the implementation of the generator class but are example use cases.
 // They should be moved to some other namespace, e.g. numerical functions, util, modifier, etc.
 template <class RngExpr>
-std::shared_ptr<himan::info> Max(RngExpr);
+himan::matrix<double> Max(RngExpr);
 
 template <class RngExpr>
-std::shared_ptr<himan::info> Min(RngExpr);
+himan::matrix<double> Min(RngExpr);
 
 template <class RngExpr>
-std::shared_ptr<himan::info> Value(RngExpr, RngExpr, double);
+himan::matrix<double> Max(RngExpr, RngExpr, double, double);
+
+template <class RngExpr>
+himan::matrix<double> Value(RngExpr, RngExpr, double);
 
 }  // namespace himan
 

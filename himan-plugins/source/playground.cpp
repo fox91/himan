@@ -271,16 +271,29 @@ void playground::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadI
 
 clock_t t;
 t = clock();
-        auto levelsForMaxHeight = h->LevelForHeight(producer(131), 1000.0);
-        auto levelsForMinHeight = h->LevelForHeight(producer(240), 1000.0);
+        auto levelsForMaxHeight = h->LevelForHeight(producer(240), 1000.0);
+        auto levelsForMinHeight = h->LevelForHeight(producer(240), 200.0);
 
 	level_series ParmLs(itsConfiguration,InputParam,forecastTime,levelsForMaxHeight.second,levelsForMinHeight.first,1.0);
         level_series HLs(itsConfiguration,param("HL-M"),forecastTime,levelsForMaxHeight.second,levelsForMinHeight.first,1.0);
-	myTargetInfo->Data().Set(VEC(Value(ParmLs,HLs,1000.0)));
+
+        level_series ParmLsTop(itsConfiguration,InputParam,forecastTime,levelsForMaxHeight.second,levelsForMaxHeight.first,1.0);
+        level_series HLsTop(itsConfiguration,param("HL-M"),forecastTime,levelsForMaxHeight.second,levelsForMaxHeight.first,1.0);
+
+        level_series ParmLsBot(itsConfiguration,InputParam,forecastTime,levelsForMinHeight.second,levelsForMinHeight.first,1.0);
+        level_series HLsBot(itsConfiguration,param("HL-M"),forecastTime,levelsForMinHeight.second,levelsForMinHeight.first,1.0);
+
+std::vector<himan::matrix<double>> Maxes;
+Maxes.push_back(Max(ParmLs,HLs,200.0,1000.0));
+Maxes.push_back(Value(ParmLsBot,HLsBot,200.0));
+Maxes.push_back(Value(ParmLsTop,HLsTop,1000.0));
+
+
+	myTargetInfo->Data().Set(Max(Maxes).Values());
 cout << float(clock() - t)/CLOCKS_PER_SEC << "s\n";
 
 /*
-	auto data = h->VerticalValue(param("T-K"),1000.0);
+	auto data = h->VerticalMaximum(param("T-K"),200.0,1000.0);
 	myTargetInfo->Data().Set(data);
 cout << float(clock() - t)/CLOCKS_PER_SEC << "s\n";*/
 

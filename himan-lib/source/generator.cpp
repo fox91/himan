@@ -2,6 +2,7 @@
 #include "ensemble.h"
 #include "plugin_factory.h"
 #include <numeric>
+#include <algorithm>
 
 namespace himan
 {
@@ -106,34 +107,23 @@ level_series::iterator& level_series::iterator::Next()
  * */
 
 template <class RngExpr>
-std::shared_ptr<himan::info> Max(RngExpr value)
+himan::matrix<double> Max(RngExpr value)
 {
 	auto begin = value.begin();
 	auto end = value.end();
 
-	if (begin == end) return nullptr;
-
-	// Find first field that contains data
-	while (*begin == nullptr)
-	{
-		++begin;
-		if (begin == end) return nullptr;
-	}
-
 	// Set first field as first set of maximum values
-	auto maxInfo = *begin;
-	maxInfo->ReGrid();
+	himan::matrix<double> ret = *begin;
 	++begin;
 
 	// Update set of maximum values
 	for (; begin != end; ++begin)
 	{
-		if (*begin == nullptr) continue;
 
-		auto in = VEC((*begin)).begin();
-		auto out = VEC(maxInfo).begin();
-		auto inEnd = VEC((*begin)).end();
-		auto outEnd = VEC(maxInfo).end();
+		auto in = (*begin).Values().begin();
+		auto out = ret.Values().begin();
+		auto inEnd = (*begin).Values().end();
+		auto outEnd = ret.Values().end();
 
 		for (; in != inEnd, out != outEnd; ++in, ++out)
 		{
@@ -141,42 +131,31 @@ std::shared_ptr<himan::info> Max(RngExpr value)
 		}
 	}
 
-	return maxInfo;
+	return ret;
 }
-template std::shared_ptr<himan::info> Max<time_series>(time_series);
-template std::shared_ptr<himan::info> Max<level_series>(level_series);
-template std::shared_ptr<himan::info> Max<std::vector<std::shared_ptr<himan::info>>>(std::vector<std::shared_ptr<himan::info>>);
+template himan::matrix<double> Max<time_series>(time_series);
+template himan::matrix<double> Max<level_series>(level_series);
+template himan::matrix<double> Max<std::vector<himan::matrix<double>>>(std::vector<himan::matrix<double>>);
 
 /*
  * Finds the minimum values for a series of info_t on the interval [begin,end)
  * */
 
 template <class RngExpr>
-std::shared_ptr<himan::info> Min(RngExpr value)
+himan::matrix<double>  Min(RngExpr value)
 {
 	auto begin = value.begin();
 	auto end = value.end();
 
-	if (begin == end) return nullptr;
-
-	while (*begin == nullptr)
-	{
-		++begin;
-		if (begin == end) return nullptr;
-	}
-
-	auto minInfo = *begin;
-	minInfo->ReGrid();
+	himan::matrix<double> ret = *begin;	
 	++begin;
 
 	for (; begin != end; ++begin)
 	{
-		if (*begin == nullptr) continue;
-
-		auto in = VEC((*begin)).begin();
-		auto out = VEC(minInfo).begin();
-		auto inEnd = VEC((*begin)).end();
-		auto outEnd = VEC(minInfo).end();
+		auto in = (*begin).Values().begin();
+		auto out = ret.Values().begin();
+		auto inEnd = (*begin).Values().end();
+		auto outEnd = ret.Values().end();
 
 		for (; in != inEnd, out != outEnd; ++in, ++out)
 		{
@@ -184,18 +163,69 @@ std::shared_ptr<himan::info> Min(RngExpr value)
 		}
 	}
 
-	return minInfo;
+	return ret;
 }
-template std::shared_ptr<himan::info> Min<time_series>(time_series);
-template std::shared_ptr<himan::info> Min<level_series>(level_series);
-template std::shared_ptr<himan::info> Min<std::vector<std::shared_ptr<himan::info>>>(std::vector<std::shared_ptr<himan::info>>);
+template himan::matrix<double> Min<time_series>(time_series);
+template himan::matrix<double> Min<level_series>(level_series);
 
 /*
- * Finds value at given height. Interpolates between levels if needed.
+ * Finds maximum value within given vertical gange.
  * */
 
 template <class RngExpr>
-std::shared_ptr<himan::info> Value(RngExpr value, RngExpr height, double theHeight)
+himan::matrix<double> Max(RngExpr value, RngExpr height, double theLowerHeight, double theUpperHeight)
+{
+        auto beginValue = value.begin();
+        auto endValue = value.end();
+        auto beginHeight = height.begin();
+        auto endHeight = height.end();
+
+        auto ret = *beginValue;
+
+        std::vector<double> lowerHeight(ret.Size(),theLowerHeight);
+        std::vector<double> upperHeight(ret.Size(),theUpperHeight);
+
+        auto prevHeightInfo = *beginHeight;
+        auto prevValueInfo = *beginValue;
+
+        for (; beginValue != endValue, beginHeight != endHeight; ++beginValue, ++beginHeight)
+        {
+                himan::matrix<double> heightInfo = *beginHeight;
+                himan::matrix<double> valueInfo = *beginValue;
+
+                auto Ret =  ret.Values().begin();
+                auto RetEnd =  ret.Values().end();
+
+                auto Value = valueInfo.Values().begin();
+                auto PrevValue = prevValueInfo.Values().begin();
+
+                auto Height = heightInfo.Values().begin();
+                auto PrevHeight = prevHeightInfo.Values().begin();
+                auto LowerHeight = lowerHeight.begin();
+                auto UpperHeight = upperHeight.begin();
+
+                for (; Ret != RetEnd; ++Value, ++Height, ++PrevValue, ++PrevHeight, ++LowerHeight, ++UpperHeight, ++Ret)
+                {
+                        register bool Mask = ((*Height <= *LowerHeight) && (*Height >= *UpperHeight)) || ((*Height >= *LowerHeight) && (*Height <= *UpperHeight));
+
+                        *Ret = Mask ? std::max(*Value,*Ret) : *Ret;
+                }
+
+                // pass current height and value to previous height and value for next loop iteration
+                prevHeightInfo = heightInfo;
+                prevValueInfo = valueInfo;
+        }
+
+        return ret;
+}
+template himan::matrix<double> Max<level_series>(level_series, level_series, double, double);
+
+/*
+ * Finds value at given vertical coordinate. Interpolates between levels if needed.
+ * */
+
+template <class RngExpr>
+himan::matrix<double> Value(RngExpr value, RngExpr height, double theHeight)
 {
 
 	auto beginValue = value.begin();
@@ -203,36 +233,27 @@ std::shared_ptr<himan::info> Value(RngExpr value, RngExpr height, double theHeig
 	auto beginHeight = height.begin();
 	auto endHeight = height.end();
 
-        if (beginValue == endValue || beginHeight == endHeight) return nullptr;
 
-        while (*beginValue == nullptr || *beginHeight == nullptr )
-        {
-                ++beginValue;
-		++beginHeight;
-                if (beginValue == endValue || beginHeight == endHeight) return nullptr;
-        }
+        himan::matrix<double> ret = *beginValue;
 
-        auto retInfo = *beginValue;
-        retInfo->ReGrid();
-	retInfo->Data().Fill(kFloatMissing);
+	std::vector<double> findHeight(ret.Size(),theHeight);
 
-	std::vector<double> findHeight(retInfo->Data().Size(),theHeight);
-
-	auto prevHeightInfo = *beginHeight;
-	auto prevValueInfo = *beginValue;
+	himan::matrix<double> prevHeightInfo = *beginHeight;
+	himan::matrix<double> prevValueInfo = *beginValue;
 
         for (; beginValue != endValue, beginHeight != endHeight; ++beginValue, ++beginHeight)
         {
-                if (*beginValue == nullptr || *beginHeight == nullptr) continue;
+		himan::matrix<double> heightInfo = *beginHeight;
+                himan::matrix<double> valueInfo = *beginValue;
 
-		auto Ret =  VEC((retInfo)).begin();
-                auto RetEnd =  VEC((retInfo)).end();
+		auto Ret = ret.Values().begin();
+                auto RetEnd = ret.Values().end();
 
-                auto Value = VEC((*beginValue)).begin();
-                auto PrevValue = VEC(prevValueInfo).begin();
+                auto Value = valueInfo.Values().begin();
+                auto PrevValue = prevValueInfo.Values().begin();
 
-                auto Height = VEC((*beginHeight)).begin();
-                auto PrevHeight = VEC(prevHeightInfo).begin();
+                auto Height = heightInfo.Values().begin();
+                auto PrevHeight = prevHeightInfo.Values().begin();
                 auto FindHeight = findHeight.begin();
 
 
@@ -245,13 +266,12 @@ std::shared_ptr<himan::info> Value(RngExpr value, RngExpr height, double theHeig
                 }
 
 		// pass current height and value to previous height and value for next loop iteration
-		prevHeightInfo = *beginHeight;
-		prevValueInfo = *beginValue;
+		prevHeightInfo = heightInfo;
+		prevValueInfo = valueInfo;
         }
 
-        return retInfo;
+        return ret;
 }
-template std::shared_ptr<himan::info> Value<level_series>(level_series, level_series, double);
-template std::shared_ptr<himan::info> Value<std::vector<std::shared_ptr<himan::info>>>(std::vector<std::shared_ptr<himan::info>>, std::vector<std::shared_ptr<himan::info>>, double);
+template himan::matrix<double> Value<level_series>(level_series, level_series, double);
 
 } // close namespace himan
