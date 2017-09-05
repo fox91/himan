@@ -31,6 +31,12 @@ AddOption(
 
 env = Environment()
 
+# Get color output from gcc / clang
+try:
+    env['ENV']['TERM'] = os.environ['TERM']
+except KeyError:
+    pass
+
 # Check build
 
 NOCUDA = GetOption('no-cuda-build')
@@ -94,6 +100,7 @@ else:
 
 librarypaths.append('/usr/lib64')
 librarypaths.append('/usr/lib64/oracle')
+librarypaths.append('/usr/lib/oracle/11.2/client64/lib')
 
 if have_cuda:
 	librarypaths.append(cuda_toolkit_path + '/lib64')
@@ -200,7 +207,8 @@ if RELEASE:
 
 if DEBUG:
 	env.Append(CPPDEFINES = ['DEBUG'])
-	env.Append(CCFLAGS = ['-O0', '-g'])
+	env.Append(CCFLAGS = ['-O0'])
+	env.Append(CCFLAGS = ['-ggdb', '-g3'])
 	env.Append(CCFLAGS = cflags_extra)
 #	env.Append(CCFLAGS = cflags_difficult)
 	build_dir = "build/debug"

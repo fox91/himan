@@ -31,10 +31,9 @@ namespace himan
 {
 namespace plugin
 {
-
 class radon : public auxiliary_plugin
 {
-public:
+   public:
 	radon();
 
 	inline virtual ~radon()
@@ -52,7 +51,6 @@ public:
 	virtual std::string ClassName() const { return "himan::plugin::radon"; }
 	virtual HPPluginClass PluginClass() const { return kAuxiliary; }
 	virtual HPVersionNumber Version() const { return HPVersionNumber(0, 1); }
-
 	/**
 	 * @brief Return filename of a field
 	 */
@@ -70,20 +68,6 @@ public:
 	 */
 
 	bool Save(const info& resultInfo, const std::string& theFileName);
-
-	/// Gets grib parameter name based on number and code table
-	/**
-	 *  \par fmiParameterId - parameter number
-	 *  \par codeTableVersion  - code table number
-	 *  \par timeRangeIndicator - time range indicator (grib 1)
-	 */
-
-	std::map<std::string, std::string> Grib1ParameterName(const long producer, const long fmiParameterId,
-	                                                      const long codeTableVersion, long timeRangeIndicator,
-	                                                      const long levelId, double level_value);
-	std::map<std::string, std::string> Grib2ParameterName(const long fmiParameterId, const long category,
-	                                                      const long discipline, const long producer,
-	                                                      const long levelId, double level_value);
 
 	/**
 	 * @brief Function to expose the NFmiRadonDB interface
@@ -122,7 +106,6 @@ inline NFmiRadonDB& radon::RadonDB()
 // the class factory
 
 extern "C" std::shared_ptr<himan_plugin> create() { return std::shared_ptr<radon>(new radon()); }
-
 #endif /* HIMAN_AUXILIARY_INCLUDE */
 
 }  // namespace plugin

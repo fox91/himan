@@ -89,7 +89,7 @@ class configuration
 	 * @return True if not at last source producer
 	 */
 
-	bool NextSourceProducer() const;  // THIS SHOULD NOT BE CONST ??
+	bool NextSourceProducer();
 
 	/**
 	 * @brief Goto first source producer
@@ -100,7 +100,7 @@ class configuration
 	 * @return True if iterator has at least one source producer
 	 */
 
-	bool FirstSourceProducer() const;  // THIS SHOULD NOT BE CONST ??
+	bool FirstSourceProducer();
 
 	/**
 	 * @brief Reset source producer iterator
@@ -110,7 +110,7 @@ class configuration
 	 *
 	 */
 
-	void ResetSourceProducer() const;
+	void ResetSourceProducer();
 
 	/**
 	 * @brief Return number of source producers
@@ -204,7 +204,7 @@ class configuration
 	 * @brief Store number of CUDA devices found
 	 */
 
-	void CudaDeviceCount(short theCudaDeviceCount);
+	void CudaDeviceCount(int theCudaDeviceCount);
 
 	/**
 	 * @brief Check if we have any CUDA-enabled devices available
@@ -217,14 +217,14 @@ class configuration
 	 * @return Number of CUDA enabled devices found
 	 */
 
-	short CudaDeviceCount() const;
+	int CudaDeviceCount() const;
 
 	/**
 	 * @return Id of the selected CUDA device
 	 */
 
-	short CudaDeviceId() const;
-	void CudaDeviceId(short theCudaDeviceId);
+	int CudaDeviceId() const;
+	void CudaDeviceId(int theCudaDeviceId);
 
 	/**
 	 * @brief Return the value if key 'step'.
@@ -251,6 +251,9 @@ class configuration
 
 	std::string ParamFile() const;
 	void ParamFile(const std::string& theParamFile);
+
+	bool AsyncExecution() const;
+	void AsyncExecution(bool theAsyncExecution);
 
    protected:
 	std::unique_ptr<producer_iter> itsSourceProducerIterator;
@@ -280,13 +283,14 @@ class configuration
 	bool itsUseDynamicMemoryAllocation;
 	bool itsReadAllAuxiliaryFilesToCache;
 
-	short itsCudaDeviceCount;
-	short itsCudaDeviceId;
+	int itsCudaDeviceCount;
+	int itsCudaDeviceId;
 
 	int itsForecastStep;
 
 	int itsCacheLimit;
 	std::string itsParamFile;
+	bool itsAsyncExecution;
 };
 
 inline std::ostream& operator<<(std::ostream& file, const configuration& ob) { return ob.Write(file); }

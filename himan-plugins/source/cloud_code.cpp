@@ -6,10 +6,8 @@
 #include "cloud_code.h"
 #include "forecast_time.h"
 #include "level.h"
-#include "logger_factory.h"
+#include "logger.h"
 #include "metutil.h"
-#include <boost/lexical_cast.hpp>
-#include <boost/thread.hpp>
 
 using namespace std;
 using namespace himan::plugin;
@@ -18,8 +16,7 @@ const string itsName("cloud_code");
 
 cloud_code::cloud_code()
 {
-	itsClearTextFormula = "algorithm>";
-	itsLogger = logger_factory::Instance()->GetLog(itsName);
+	itsLogger = logger(itsName);
 }
 
 void cloud_code::Process(std::shared_ptr<const plugin_configuration> conf)
@@ -42,7 +39,7 @@ void cloud_code::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadI
 	// Required source parameters
 
 	const param TParam("T-K");
-	const param RHParam("RH-PRCNT");
+	const params RHParam = {param("RH-0TO1"), param("RH-PRCNT")};
 	const params NParams = {param("N-0TO1"), param("N-PRCNT")};
 	const param KParam("KINDEX-N");
 
@@ -52,15 +49,14 @@ void cloud_code::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadI
 	level RH700Level(himan::kPressure, 700, "PRESSURE");
 	level RH500Level(himan::kPressure, 500, "PRESSURE");
 
-	auto myThreadedLogger =
-	    logger_factory::Instance()->GetLog(itsName + "Thread #" + boost::lexical_cast<string>(threadIndex));
+	auto myThreadedLogger = logger(itsName + "Thread #" + to_string(threadIndex));
 
 	forecast_time forecastTime = myTargetInfo->Time();
 	level forecastLevel = myTargetInfo->Level();
 	forecast_type forecastType = myTargetInfo->ForecastType();
 
-	myThreadedLogger->Info("Calculating time " + static_cast<string>(forecastTime.ValidDateTime()) + " level " +
-	                       static_cast<string>(forecastLevel));
+	myThreadedLogger.Info("Calculating time " + static_cast<string>(forecastTime.ValidDateTime()) + " level " +
+	                      static_cast<string>(forecastLevel));
 
 	info_t T0mInfo = Fetch(forecastTime, T0mLevel, TParam, forecastType, false);
 	info_t NInfo = Fetch(forecastTime, NKLevel, NParams, forecastType, false);
@@ -72,18 +68,25 @@ void cloud_code::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadI
 
 	if (!T0mInfo || !NInfo || !KInfo || !T850Info || !RH850Info || !RH700Info || !RH500Info)
 	{
-		myThreadedLogger->Warning("Skipping step " + boost::lexical_cast<string>(forecastTime.Step()) + ", level " +
-		                          static_cast<string>(forecastLevel));
+		myThreadedLogger.Warning("Skipping step " + to_string(forecastTime.Step()) + ", level " +
+		                         static_cast<string>(forecastLevel));
 		return;
 	}
 
 	string deviceType = "CPU";
 
-	int percentMultiplier = 1;
+	double percentMultiplier = 1.0;
 
+	if (RH500Info->Param().Unit() != kPrcnt)
+	{
+		itsLogger.Info("RH parameter unit not kPrcnt, assuming 0 .. 1");
+		percentMultiplier = 100.0;
+	}
+
+	// Special case for hirlam
 	if (myTargetInfo->Producer().Name() == "HL2MTA")
 	{
-		percentMultiplier = 100;
+		percentMultiplier = 100.0;
 	}
 
 	LOCKSTEP(myTargetInfo, T0mInfo, NInfo, KInfo, T850Info, RH850Info, RH700Info, RH500Info)
@@ -96,8 +99,7 @@ void cloud_code::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadI
 		double RH700 = RH700Info->Value();
 		double RH500 = RH500Info->Value();
 
-		if (T0m == kFloatMissing || N == kFloatMissing || kIndex == kFloatMissing || T850 == kFloatMissing ||
-		    RH850 == kFloatMissing || RH700 == kFloatMissing || RH500 == kFloatMissing)
+		if (IsMissingValue({T0m, N, kIndex, T850, RH850, RH700, RH500}))
 		{
 			continue;
 		}
@@ -321,7 +323,6 @@ void cloud_code::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadI
 		myTargetInfo->Value(cloudCode);
 	}
 
-	myThreadedLogger->Info("[" + deviceType + "] Missing values: " +
-	                       boost::lexical_cast<string>(myTargetInfo->Data().MissingCount()) + "/" +
-	                       boost::lexical_cast<string>(myTargetInfo->Data().Size()));
+	myThreadedLogger.Info("[" + deviceType + "] Missing values: " + to_string(myTargetInfo->Data().MissingCount()) +
+	                      "/" + to_string(myTargetInfo->Data().Size()));
 }

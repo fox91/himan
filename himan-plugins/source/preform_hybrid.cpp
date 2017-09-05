@@ -5,16 +5,13 @@
 
 #define AND &&
 #define OR ||
-#define MISS kFloatMissing
 
 #include "preform_hybrid.h"
 #include "forecast_time.h"
 #include "level.h"
-#include "logger_factory.h"
+#include "logger.h"
 #include "plugin_factory.h"
 #include "util.h"
-#include <boost/foreach.hpp>
-#include <boost/lexical_cast.hpp>
 #include <boost/thread.hpp>
 #include <iostream>
 
@@ -122,9 +119,7 @@ const param rhMeltUpperParam("RHMELT-UPPER-PRCNT");
 
 preform_hybrid::preform_hybrid()
 {
-	itsClearTextFormula = "<algorithm>";
-
-	itsLogger = logger_factory::Instance()->GetLog("preform_hybrid");
+	itsLogger = logger("preform_hybrid");
 }
 
 void preform_hybrid::Process(std::shared_ptr<const plugin_configuration> conf)
@@ -165,15 +160,14 @@ void preform_hybrid::Calculate(shared_ptr<info> myTargetInfo, unsigned short thr
 	level surface0mLevel(kHeight, 0);
 	level surface2mLevel(kHeight, 2);
 
-	auto myThreadedLogger =
-	    logger_factory::Instance()->GetLog("preformHybridThread #" + boost::lexical_cast<string>(threadIndex));
+	auto myThreadedLogger = logger("preformHybridThread #" + to_string(threadIndex));
 
 	forecast_time forecastTime = myTargetInfo->Time();
 	level forecastLevel = myTargetInfo->Level();
 	forecast_type forecastType = myTargetInfo->ForecastType();
 
-	myThreadedLogger->Info("Calculating time " + static_cast<string>(forecastTime.ValidDateTime()) + " level " +
-	                       static_cast<string>(forecastLevel));
+	myThreadedLogger.Info("Calculating time " + static_cast<string>(forecastTime.ValidDateTime()) + " level " +
+	                      static_cast<string>(forecastLevel));
 
 	// Source infos
 
@@ -182,8 +176,8 @@ void preform_hybrid::Calculate(shared_ptr<info> myTargetInfo, unsigned short thr
 
 	if (!RRInfo || !TInfo)
 	{
-		myThreadedLogger->Warning("Skipping step " + boost::lexical_cast<string>(forecastTime.Step()) + ", level " +
-		                          static_cast<string>(forecastLevel));
+		myThreadedLogger.Warning("Skipping step " + to_string(forecastTime.Step()) + ", level " +
+		                         static_cast<string>(forecastLevel));
 		return;
 	}
 
@@ -207,20 +201,20 @@ void preform_hybrid::Calculate(shared_ptr<info> myTargetInfo, unsigned short thr
 
 	if (!stratus)
 	{
-		myThreadedLogger->Error("stratus calculation failed, unable to proceed");
+		myThreadedLogger.Error("stratus calculation failed, unable to proceed");
 		return;
 	}
 
 	if (!freezingArea)
 	{
-		myThreadedLogger->Error("freezingArea calculation failed, unable to proceed");
+		myThreadedLogger.Error("freezingArea calculation failed, unable to proceed");
 		return;
 	}
 
 	freezingArea->First();
 	stratus->First();
 
-	myThreadedLogger->Info("Stratus and freezing area calculated");
+	myThreadedLogger.Info("Stratus and freezing area calculated");
 
 	string deviceType = "CPU";
 
@@ -239,15 +233,6 @@ void preform_hybrid::Calculate(shared_ptr<info> myTargetInfo, unsigned short thr
 	int SNOW = 3;
 	int FREEZING_DRIZZLE = 4;
 	int FREEZING_RAIN = 5;
-
-	if (itsConfiguration->OutputFileType() == kGRIB2)
-	{
-		DRIZZLE = 11;  // reserved for local use
-		SLEET = 7;     // mixture of rain and snow
-		SNOW = 5;
-		FREEZING_DRIZZLE = 12;  // reserved for local use
-		FREEZING_RAIN = 3;
-	}
 
 	LOCKSTEP(myTargetInfo, stratus, freezingArea, TInfo, RRInfo)
 	{
@@ -299,7 +284,7 @@ void preform_hybrid::Calculate(shared_ptr<info> myTargetInfo, unsigned short thr
 		double RR = RRInfo->Value();
 		double T = TInfo->Value();
 
-		if (RR == MISS || T == MISS)
+		if (IsMissing(RR) || IsMissing(T))
 		{
 			continue;
 		}
@@ -309,74 +294,41 @@ void preform_hybrid::Calculate(shared_ptr<info> myTargetInfo, unsigned short thr
 			continue;
 		}
 
-		double PreForm = MISS;
+		double PreForm = MissingDouble();
 
 		// Unit conversions
 
 		T -= himan::constants::kKelvin;  // K --> C
 
-		if (Ttop != MISS)
+		if (!IsMissing(Ttop))
 		{
 			Ttop -= himan::constants::kKelvin;
 		}
 
-		if (stTavg != MISS)
+		if (!IsMissing(stTavg))
 		{
 			stTavg -= himan::constants::kKelvin;
 		}
 
-		if (Navg != MISS)
+		if (!IsMissing(Navg))
 		{
 			Navg *= 100;  // --> %
 		}
 
 		assert(T >= -80 && T < 80);
 		assert(!noPotentialPrecipitationForm || RR > 0);
-		assert(Navg == MISS || (Navg >= 0 && Navg <= 100));
-/*
-		cout << "base\t\t" << base << endl
-		     << "top\t\t" << top << endl
-		     << "Navg\t\t" << Navg << endl
-		     << "upperLayerN\t" << upperLayerN << endl
-		     << "RR\t\t" << RR << endl
-		     << "stTavg\t\t" << stTavg << endl
-		     << "T\t\t" << T << endl
-		     << "Ttop\t\t" << Ttop << endl
-		     << "plusArea\t" << plusArea << endl
-		     << "plusAreaSfc\t" << plusAreaSfc << endl
-		     << "minusArea\t" << minusArea << endl
-		     << "nZeroLevel\t" << nZeroLevel << endl
-		     << "rhAvg\t\t" << rhAvg << endl
-		     << "rhAvgUpper\t" << rhAvgUpper << endl
-		     << "rhMelt\t\t" << rhMelt << endl
-		     << "rhMeltUpper\t" << rhMeltUpper << endl
-		     << "wAvg\t\t" << wAvg << endl
-		     << "baseLimit\t" << baseLimit << endl
-		     << "stLimit\t\t" << stLimit << endl
-		     << "stTlimit\t" << stTlimit << endl
-		     << "Nlimit\t\t" << Nlimit << endl
-		     << "dryNlim\t\t" << dryNlim << endl
-		     << "waterArea\t" << waterArea << endl
-		     << "snowArea\t" << snowArea << endl
-		     << "wMax\t\t" << wMax << endl
-		     << "sfcMin\t\t" << sfcMin << endl
-		     << "sfcMax\t\t" << sfcMax << endl
-		     << "fzdzLim\t\t" << fzdzLim << endl
-		     << "fzStLimit\t" << fzStLimit << endl
-		     << "fzraPA\t\t" << fzraPA << endl
-		     << "fzraMA\t\t" << fzraMA << endl;
-*/
+		assert(IsMissing(Navg) || (Navg >= 0 && Navg <= 100));
+
 		// Start algorithm
 		// Possible values for preform: 0 = tihku, 1 = vesi, 2 = räntä, 3 = lumi, 4 = jäätävä tihku, 5 = jäätävä sade
 
 		// 1. jäätävää tihkua? (tai lumijyväsiä)
 
-		if (base != MISS AND top != MISS AND upperLayerN != MISS AND wAvg != MISS AND Navg != MISS AND stTavg !=
-		    MISS AND Ttop !=
-		    MISS AND RR <=
-		        fzdzLim AND
-		            base<baseLimit AND(top - base) >= fzStLimit AND wAvg<wMax AND wAvg >= 0 AND Navg> Nlimit AND Ttop>
-		                stTlimit AND stTavg > stTlimit AND T > sfcMin AND T <= sfcMax AND upperLayerN < dryNlim)
+		if (!IsMissing(base) AND !IsMissing(top) AND !IsMissing(upperLayerN) AND !IsMissing(wAvg) AND !IsMissing(Navg)
+		        AND !IsMissing(stTavg) AND !IsMissing(Ttop) AND RR <=
+		    fzdzLim AND
+		        base<baseLimit AND(top - base) >= fzStLimit AND wAvg<wMax AND wAvg >= 0 AND Navg> Nlimit AND Ttop>
+		            stTlimit AND stTavg > stTlimit AND T > sfcMin AND T <= sfcMax AND upperLayerN < dryNlim)
 		{
 			PreForm = FREEZING_DRIZZLE;
 		}
@@ -387,26 +339,26 @@ void preform_hybrid::Calculate(shared_ptr<info> myTargetInfo, unsigned short thr
 		// kuivaa?
 		// (Huom. hyvin paksu pakkaskerros (tai ohut sulamiskerros) -> oikeasti jääjyväsiä/ice pellets fzra sijaan)
 
-		if (PreForm == MISS AND plusArea != MISS AND minusArea != MISS AND rhAvgUpper != MISS AND rhMeltUpper !=
-		    MISS AND plusArea >
-		        fzraPA AND minusArea<fzraMA AND T <= 0 AND(upperLayerN == MISS OR upperLayerN > dryNlim) AND rhAvgUpper>
-		            rhMeltUpper)
+		if (IsMissing(PreForm) AND !IsMissing(plusArea) AND !IsMissing(minusArea) AND !IsMissing(rhAvgUpper)
+		        AND !IsMissing(rhMeltUpper) AND plusArea >
+		    fzraPA AND minusArea<fzraMA AND T <= 0 AND(IsMissing(upperLayerN) OR upperLayerN > dryNlim) AND rhAvgUpper>
+		        rhMeltUpper)
 		{
 			PreForm = FREEZING_RAIN;
 		}
 
 		// 3. Lunta, räntää, tihkua vai vettä? PK:n koodia mukaillen
 
-		if (PreForm == MISS)
+		if (IsMissing(PreForm))
 		{
 			// Tihkua tai vettä jos "riitävän paksu lämmin kerros pinnan yläpuolella"
 
-			if (plusArea != MISS AND plusArea > waterArea)
+			if (!IsMissing(plusArea) AND plusArea > waterArea)
 			{
 				// Tihkua jos riittävän paksu stratus heikolla sateen intensiteetillä ja yläpuolella kuiva kerros
 				// AND (ConvPre=0) poistettu alla olevasta (ConvPre mm/h puuttuu EC:stä; Hirlam-versiossa pidetään
 				// mukana)
-				if (base != MISS && top != MISS && Navg != MISS && upperLayerN != MISS && RR <= dzLim &&
+				if (!IsMissing(base) && !IsMissing(top) && !IsMissing(Navg) && !IsMissing(upperLayerN) && RR <= dzLim &&
 				    base < baseLimit && (top - base) > stLimit && Navg > Nlimit && upperLayerN < dryNlim)
 				{
 					PreForm = DRIZZLE;
@@ -418,8 +370,8 @@ void preform_hybrid::Calculate(shared_ptr<info> myTargetInfo, unsigned short thr
 
 				// Jos pinnan plussakerroksessa on kuivaa, korjataan olomuodoksi räntä veden sijaan
 
-				if (nZeroLevel != MISS AND rhAvg != MISS AND rhMelt != MISS AND nZeroLevel ==
-				    1 AND rhAvg < rhMelt AND plusArea < 4000)
+				if (!IsMissing(nZeroLevel) AND !IsMissing(rhAvg) AND !IsMissing(rhMelt)
+				        AND nZeroLevel == 1 AND rhAvg < rhMelt AND plusArea < 4000)
 				{
 					PreForm = SLEET;
 				}
@@ -427,7 +379,7 @@ void preform_hybrid::Calculate(shared_ptr<info> myTargetInfo, unsigned short thr
 				// Lisäys, jolla korjataan vesi/tihku lumeksi, jos pintakerros pakkasella (mutta jäätävän sateen/tihkun
 				// kriteerit eivät toteudu,
 				// esim. paksu plussakerros pakkas-st/sc:n yllä)
-				if (minusArea != MISS OR(plusAreaSfc != MISS AND plusAreaSfc < snowArea))
+				if (!IsMissing(minusArea) OR(!IsMissing(plusAreaSfc) AND plusAreaSfc < snowArea))
 				{
 					PreForm = SNOW;
 				}
@@ -435,20 +387,21 @@ void preform_hybrid::Calculate(shared_ptr<info> myTargetInfo, unsigned short thr
 
 			// Räntää jos "ei liian paksu lämmin kerros pinnan yläpuolella"
 
-			if (plusArea != MISS AND plusArea >= snowArea AND plusArea <= waterArea)
+			if (!IsMissing(plusArea) AND plusArea >= snowArea AND plusArea <= waterArea)
 			{
 				PreForm = SLEET;
 
 				// Jos pinnan plussakerroksessa on kuivaa, korjataan olomuodoksi lumi rännän sijaan
 
-				if (nZeroLevel != MISS AND rhAvg != MISS AND rhMelt != MISS AND nZeroLevel == 1 AND rhAvg < rhMelt)
+				if (!IsMissing(nZeroLevel) AND !IsMissing(rhAvg) AND !IsMissing(rhMelt)
+				        AND nZeroLevel == 1 AND rhAvg < rhMelt)
 				{
 					PreForm = SNOW;
 				}
 
 				// lisäys, jolla korjataan räntä lumeksi, kun pintakerros pakkasella tai vain ohuelti plussalla
 
-				if (minusArea != MISS OR(plusAreaSfc != MISS AND plusAreaSfc < snowArea))
+				if (!IsMissing(minusArea) OR(!IsMissing(plusAreaSfc) AND plusAreaSfc < snowArea))
 				{
 					PreForm = SNOW;
 				}
@@ -456,7 +409,7 @@ void preform_hybrid::Calculate(shared_ptr<info> myTargetInfo, unsigned short thr
 
 			// Muuten lunta (PlusArea<50: "korkeintaan ohut lämmin kerros pinnan yläpuolella")
 
-			if (plusArea == MISS OR plusArea < snowArea)
+			if (IsMissing(plusArea) OR plusArea < snowArea)
 			{
 				PreForm = SNOW;
 			}
@@ -483,14 +436,10 @@ void preform_hybrid::Calculate(shared_ptr<info> myTargetInfo, unsigned short thr
 				myTargetInfo->Value(PreForm);
 			}
 		}
-/*
-		cout << "PreForm\t" << PreForm << std::endl;
-*/
 	}
 
-	myThreadedLogger->Info("[" + deviceType + "] Missing values: " +
-	                       boost::lexical_cast<string>(myTargetInfo->Data().MissingCount()) + "/" +
-	                       boost::lexical_cast<string>(myTargetInfo->Data().Size()));
+	myThreadedLogger.Info("[" + deviceType + "] Missing values: " + to_string(myTargetInfo->Data().MissingCount()) +
+	                      "/" + to_string(myTargetInfo->Data().Size()));
 }
 
 void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, const forecast_time& ftime,
@@ -526,7 +475,7 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 	vector<double> plusArea, minusArea, plusAreaSfc;
 	vector<double> rhAvg01, rhAvgUpper12, rhAvgUpper23;
 
-	auto logger = logger_factory::Instance()->GetLog("preform_hybrid-freezing_area");
+	auto log = logger("preform_hybrid-freezing_area");
 
 	try
 	{
@@ -534,7 +483,7 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 
 		param wantedParam("T-K");
 
-		logger->Trace("Counting number of zero levels");
+		log.Trace("Counting number of zero levels");
 
 		numZeroLevels = h->VerticalCount(wantedParam, constData1, constData2, constData3);
 
@@ -544,25 +493,25 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 #ifdef DEBUG
 		for (size_t i = 0; i < numZeroLevels.size(); i++)
 		{
-			assert(numZeroLevels[i] != MISS);
+			assert(!IsMissing(numZeroLevels[i]));
 		}
 
 		util::DumpVector(numZeroLevels, "num zero levels");
 #endif
 
-		zeroLevel1.resize(numZeroLevels.size(), MISS);
-		zeroLevel2.resize(numZeroLevels.size(), MISS);
-		zeroLevel3.resize(numZeroLevels.size(), MISS);
-		zeroLevel4.resize(numZeroLevels.size(), MISS);
+		zeroLevel1.resize(numZeroLevels.size(), MissingDouble());
+		zeroLevel2.resize(numZeroLevels.size(), MissingDouble());
+		zeroLevel3.resize(numZeroLevels.size(), MissingDouble());
+		zeroLevel4.resize(numZeroLevels.size(), MissingDouble());
 
-		rhAvgUpper12.resize(numZeroLevels.size(), MISS);
-		rhAvgUpper23.resize(numZeroLevels.size(), MISS);
+		rhAvgUpper12.resize(numZeroLevels.size(), MissingDouble());
+		rhAvgUpper23.resize(numZeroLevels.size(), MissingDouble());
 
 		// Keskim. lämpötila 1. nollarajan alapuolella, 1/2. ja 2/3. nollarajojen välisissä kerroksissa [C]
-		Tavg01.resize(numZeroLevels.size(), MISS);
-		Tavg12.resize(numZeroLevels.size(), MISS);
-		Tavg23.resize(numZeroLevels.size(), MISS);
-		Tavg34.resize(numZeroLevels.size(), MISS);
+		Tavg01.resize(numZeroLevels.size(), MissingDouble());
+		Tavg12.resize(numZeroLevels.size(), MissingDouble());
+		Tavg23.resize(numZeroLevels.size(), MissingDouble());
+		Tavg34.resize(numZeroLevels.size(), MissingDouble());
 
 		// 1. nollarajan alapuolisen, 2/3. nollarajojen välisen, ja koko T>0 alueen koko [mC, "metriastetta"]
 		plusArea = zeroLevel1;
@@ -571,14 +520,14 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 		// Mahdollisen pinta- tai 1/2. nollarajojen välisen pakkaskerroksen koko [mC, "metriastetta"]
 		minusArea = zeroLevel1;
 
-		logger->Trace("Searching for first zero level height");
+		log.Trace("Searching for first zero level height");
 		zeroLevel1 = h->VerticalHeight(wantedParam, constData1, constData2, constData3, 1);
 
 #ifdef DEBUG
 		util::DumpVector(zeroLevel1, "zero level 1");
 #endif
 
-		logger->Trace("Searching for average temperature between ground level and first zero level");
+		log.Trace("Searching for average temperature between ground level and first zero level");
 		Tavg01 = h->VerticalAverage(wantedParam, constData1, zeroLevel1);
 
 #ifdef DEBUG
@@ -587,7 +536,7 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 
 		wantedParam = param("RH-PRCNT");
 
-		logger->Trace("Searching for average humidity between ground and first zero level");
+		log.Trace("Searching for average humidity between ground and first zero level");
 		// Keskimääräinen RH nollarajan alapuolisessa plussakerroksessa
 		rhAvg01 = h->VerticalAverage(wantedParam, constData1, zeroLevel1);
 
@@ -603,21 +552,21 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 			// Values between zero levels 1 <--> 2
 			wantedParam = param("T-K");
 
-			logger->Trace("Searching for second zero level height");
+			log.Trace("Searching for second zero level height");
 			zeroLevel2 = h->VerticalHeight(wantedParam, constData1, constData2, constData3, 2);
 
 #ifdef DEBUG
 			util::DumpVector(zeroLevel2, "zero level 2");
 #endif
 
-			logger->Trace("Searching for average temperature between first and second zero level");
+			log.Trace("Searching for average temperature between first and second zero level");
 			Tavg12 = h->VerticalAverage(wantedParam, zeroLevel1, zeroLevel2);
 
 #ifdef DEBUG
 			util::DumpVector(Tavg12, "tavg 12");
 #endif
 
-			logger->Trace("Searching for average humidity between first and second zero level");
+			log.Trace("Searching for average humidity between first and second zero level");
 
 			// Keskimääräinen RH pakkaskerroksen yläpuolisessa plussakerroksessa
 			wantedParam = param("RH-PRCNT");
@@ -631,14 +580,14 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 			// 2 <--> 3
 			wantedParam = param("T-K");
 
-			logger->Trace("Searching for third zero level height");
+			log.Trace("Searching for third zero level height");
 			zeroLevel3 = h->VerticalHeight(wantedParam, constData1, constData2, constData3, 3);
 
 #ifdef DEBUG
 			util::DumpVector(zeroLevel3, "zero level 3");
 #endif
 
-			logger->Trace("Searching for average temperature between second and third zero level");
+			log.Trace("Searching for average temperature between second and third zero level");
 			Tavg23 = h->VerticalAverage(wantedParam, zeroLevel2, zeroLevel3);
 
 #ifdef DEBUG
@@ -647,7 +596,7 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 
 			wantedParam = param("RH-PRCNT");
 
-			logger->Trace("Searching for average humidity between second and third zero level");
+			log.Trace("Searching for average humidity between second and third zero level");
 
 			// Keskimääräinen RH ylemmässä plussakerroksessa
 			rhAvgUpper23 = h->VerticalAverage(wantedParam, zeroLevel2, zeroLevel3);
@@ -659,14 +608,14 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 			// 3 <--> 4
 			wantedParam = param("T-K");
 
-			logger->Trace("Searching for fourth zero level height");
+			log.Trace("Searching for fourth zero level height");
 			zeroLevel4 = h->VerticalHeight(wantedParam, constData1, constData2, constData3, 4);
 
 #ifdef DEBUG
 			util::DumpVector(zeroLevel4, "zero level 4");
 #endif
 
-			logger->Trace("Searching for average temperature between third and fourth zero level");
+			log.Trace("Searching for average temperature between third and fourth zero level");
 			Tavg34 = h->VerticalAverage(wantedParam, zeroLevel3, zeroLevel4);
 
 #ifdef DEBUG
@@ -677,7 +626,7 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 		{
 			if (e == kFileDataNotFound)
 			{
-				logger->Debug("Some zero level not found from entire data");
+				log.Debug("Some zero level not found from entire data");
 			}
 		}
 	}
@@ -685,7 +634,7 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 	{
 		if (e != kFileDataNotFound)
 		{
-			throw runtime_error("FreezingArea() caught exception " + boost::lexical_cast<string>(e));
+			throw runtime_error("FreezingArea() caught exception " + to_string(e));
 		}
 		else
 		{
@@ -695,18 +644,18 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 
 	// Keskimääräinen rhMelt nollarajan alapuolisessa plussakerroksessa, ja pakkaskerroksen yläpuolisessa
 	// plussakerroksessa
-	vector<double> rhMeltUpper(rhAvg01.size(), MISS);
-	vector<double> rhMelt(rhAvg01.size(), MISS);
+	vector<double> rhMeltUpper(rhAvg01.size(), MissingDouble());
+	vector<double> rhMelt(rhAvg01.size(), MissingDouble());
 
 	// Keskimääräinen RH nollarajan alapuolisessa plussakerroksessa, ja pakkaskerroksen yläpuolisessa plussakerroksessa
-	vector<double> rhAvgUpper(rhAvg01.size(), MISS);
-	vector<double> rhAvg(rhAvg01.size(), MISS);
+	vector<double> rhAvgUpper(rhAvg01.size(), MissingDouble());
+	vector<double> rhAvg(rhAvg01.size(), MissingDouble());
 
 	for (size_t i = 0; i < numZeroLevels.size(); i++)
 	{
 		short numZeroLevel = static_cast<short>(numZeroLevels[i]);
 
-		double pa = MISS, ma = MISS, pasfc = MISS;
+		double pa = MissingDouble(), ma = MissingDouble(), pasfc = MissingDouble();
 
 		// Kommentteja Simolta nollakohtien lukumäärään:
 		// * Nollakohtien löytymättömyys ei ole ongelma, sillä tällöin olomuoto on aina lumi tai jäätävä tihku
@@ -720,9 +669,9 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 			double zl1 = zeroLevel1[i], zl2 = zeroLevel2[i];
 			double ta1 = Tavg01[i], ta2 = Tavg12[i];
 
-			double paloft = MISS;
+			double paloft = MissingDouble();
 
-			if (zl1 != MISS && zl2 != MISS && ta1 != MISS && ta2 != MISS)
+			if (!IsMissing(zl1) && !IsMissing(zl2) && !IsMissing(ta1) && !IsMissing(ta2))
 			{
 				ta1 -= constants::kKelvin;
 				ta2 -= constants::kKelvin;
@@ -745,7 +694,7 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 				double zl3 = zeroLevel3[i], zl4 = zeroLevel4[i];
 				ta2 = Tavg34[i];
 
-				if (zl3 != MISS && zl4 != MISS && ta2 != MISS && paloft != MISS)
+				if (!IsMissing(zl3) && !IsMissing(zl4) && !IsMissing(ta2) && !IsMissing(paloft))
 				{
 					paloft = paloft + (zl4 - zl3) * (ta2 - constants::kKelvin);
 				}
@@ -759,9 +708,9 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 		else if (numZeroLevel % 2 == 1)
 		{
 			double zl1 = zeroLevel1[i], ta1 = Tavg01[i];
-			double paloft = MISS;
+			double paloft = MissingDouble();
 
-			if (zl1 != MISS && ta1 != MISS)
+			if (!IsMissing(zl1) && !IsMissing(ta1))
 			{
 				ta1 -= constants::kKelvin;
 				pasfc = zl1 * ta1;
@@ -789,7 +738,7 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 				double zl2 = zeroLevel2[i], zl3 = zeroLevel3[i];
 				double ta2 = Tavg23[i];
 
-				if (zl2 != MISS && zl3 != MISS && ta2 != MISS)
+				if (!IsMissing(zl2) && !IsMissing(zl3) && !IsMissing(ta2))
 				{
 					ta2 -= constants::kKelvin;
 
@@ -801,8 +750,8 @@ void preform_hybrid::FreezingArea(shared_ptr<const plugin_configuration> conf, c
 					// Keskimääräinen RH ylemmässä plussakerroksessa
 					rhAvgUpper[i] = rhAvgUpper23[i];
 
-					if (rhAvgUpper[i] != MISS AND rhMeltUpper[i] != MISS AND rhAvgUpper[i] > rhMeltUpper[i] &&
-					    pasfc != MISS)
+					if (!IsMissing(rhAvgUpper[i]) AND !IsMissing(rhMeltUpper[i]) AND rhAvgUpper[i] > rhMeltUpper[i] &&
+					    !IsMissing(pasfc))
 					{
 						pa = pasfc + paloft;
 					}
@@ -882,7 +831,7 @@ void preform_hybrid::Stratus(shared_ptr<const plugin_configuration> conf, const 
 	vector<double> constData1(ret->Data().Size(), 0);
 
 	auto constData2 = constData1;
-	auto logger = logger_factory::Instance()->GetLog("preform_hybrid-stratus");
+	auto log = logger("preform_hybrid-stratus");
 
 	try
 	{
@@ -891,13 +840,13 @@ void preform_hybrid::Stratus(shared_ptr<const plugin_configuration> conf, const 
 
 		vector<param> wantedParamList({param("N-0TO1"), param("N-PRCNT")});
 
-		logger->Info("Searching for stratus lower limit");
+		log.Info("Searching for stratus lower limit");
 
 		auto baseThreshold = h->VerticalMinimum(wantedParamList, 0, stLimit);
 
 		for (size_t i = 0; i < baseThreshold.size(); i++)
 		{
-			assert(baseThreshold[i] != MISS);
+			assert(!IsMissing(baseThreshold[i]));
 
 			if (baseThreshold[i] < stCover)
 			{
@@ -912,13 +861,13 @@ void preform_hybrid::Stratus(shared_ptr<const plugin_configuration> conf, const 
 		ret->Param(stratusBaseParam);
 		ret->Data().Set(baseThreshold);
 
-		logger->Info("Searching for stratus upper limit");
+		log.Info("Searching for stratus upper limit");
 
 		auto topThreshold = h->VerticalMinimum(wantedParamList, stLimit, layer);
 
 		for (size_t i = 0; i < topThreshold.size(); i++)
 		{
-			assert(topThreshold[i] != MISS);
+			assert(!IsMissing(topThreshold[i]));
 			if (topThreshold[i] < stCover)
 			{
 				topThreshold[i] = stCover;
@@ -932,7 +881,7 @@ void preform_hybrid::Stratus(shared_ptr<const plugin_configuration> conf, const 
 		// Stratus Base/top [m]
 		// _findh: 0 = viimeinen löytyvä arvo pinnasta ylöspäin, 1 = ensimmäinen löytyvä arvo
 
-		logger->Info("Searching for stratus base accurate value");
+		log.Info("Searching for stratus base accurate value");
 
 		auto stratusBase = h->VerticalHeight(wantedParamList, 0, stLimit, baseThreshold);
 
@@ -943,7 +892,7 @@ void preform_hybrid::Stratus(shared_ptr<const plugin_configuration> conf, const 
 		util::DumpVector(stratusBase);
 #endif
 
-		logger->Info("Searching for stratus top accurate value");
+		log.Info("Searching for stratus top accurate value");
 		auto stratusTop = h->VerticalHeight(wantedParamList, stLimit, layer, topThreshold, 0);
 
 		ret->Param(stratusTopParam);
@@ -955,16 +904,16 @@ void preform_hybrid::Stratus(shared_ptr<const plugin_configuration> conf, const 
 
 		try
 		{
-			logger->Info("Searching for cloudiness in layers above stratus top");
+			log.Info("Searching for cloudiness in layers above stratus top");
 
 			assert(constData1.size() == constData2.size() && constData1.size() == stratusTop.size());
 
 			for (size_t i = 0; i < constData1.size(); i++)
 			{
-				if (stratusTop[i] == MISS)
+				if (IsMissing(stratusTop[i]))
 				{
-					constData1[i] = MISS;
-					constData2[i] = MISS;
+					constData1[i] = MissingDouble();
+					constData2[i] = MissingDouble();
 				}
 				else
 				{
@@ -982,7 +931,7 @@ void preform_hybrid::Stratus(shared_ptr<const plugin_configuration> conf, const 
 			util::DumpVector(upperLayerN);
 #endif
 
-			logger->Info("Searching for stratus mean cloudiness");
+			log.Info("Searching for stratus mean cloudiness");
 
 			// Stratuksen keskimääräinen N
 			auto stratusMeanN = h->VerticalAverage(wantedParamList, stratusBase, stratusTop);
@@ -994,7 +943,7 @@ void preform_hybrid::Stratus(shared_ptr<const plugin_configuration> conf, const 
 			ret->Param(stratusMeanCloudinessParam);
 			ret->Data().Set(stratusMeanN);
 
-			logger->Info("Searching for stratus top temperature");
+			log.Info("Searching for stratus top temperature");
 
 			param wantedParam("T-K");
 
@@ -1008,17 +957,17 @@ void preform_hybrid::Stratus(shared_ptr<const plugin_configuration> conf, const 
 			ret->Param(stratusTopTempParam);
 			ret->Data().Set(stratusTopTemp);
 
-			logger->Info("Searching for stratus mean temperature");
+			log.Info("Searching for stratus mean temperature");
 
 			for (size_t i = 0; i < constData1.size(); i++)
 			{
 				double lower = stratusBase[i];
 				double upper = stratusTop[i];
 
-				if (lower == MISS || upper == MISS)
+				if (IsMissing(lower) || IsMissing(upper))
 				{
-					constData1[i] = MISS;
-					constData2[i] = MISS;
+					constData1[i] = MissingDouble();
+					constData2[i] = MissingDouble();
 				}
 				else if (fabs(lower - upper) < 100)
 				{
@@ -1042,7 +991,7 @@ void preform_hybrid::Stratus(shared_ptr<const plugin_configuration> conf, const 
 			ret->Param(stratusMeanTempParam);
 			ret->Data().Set(stratusMeanTemp);
 
-			logger->Info("Searching for mean vertical velocity in stratus");
+			log.Info("Searching for mean vertical velocity in stratus");
 
 			wantedParam = param("VV-MMS");
 
@@ -1057,14 +1006,14 @@ void preform_hybrid::Stratus(shared_ptr<const plugin_configuration> conf, const 
 			{
 				if (e == kFileDataNotFound)
 				{
-					logger->Debug("Trying for param VV-MS");
+					log.Debug("Trying for param VV-MS");
 					wantedParam = param("VV-MS");
 
 					stratusVerticalVelocity = h->VerticalAverage(wantedParam, stratusBase, stratusTop);
 
-					BOOST_FOREACH (double& d, stratusVerticalVelocity)
+					for (double& d : stratusVerticalVelocity)
 					{
-						if (d != kFloatMissing) d *= 1000;
+						if (!IsMissing(d)) d *= 1000;
 					}
 				}
 			}
@@ -1080,7 +1029,7 @@ void preform_hybrid::Stratus(shared_ptr<const plugin_configuration> conf, const 
 		{
 			if (e != kFileDataNotFound)
 			{
-				throw runtime_error("Stratus() caught exception " + boost::lexical_cast<string>(e));
+				throw runtime_error("Stratus() caught exception " + to_string(e));
 			}
 		}
 	}
@@ -1088,7 +1037,7 @@ void preform_hybrid::Stratus(shared_ptr<const plugin_configuration> conf, const 
 	{
 		if (e != kFileDataNotFound)
 		{
-			throw runtime_error("Stratus() caught exception " + boost::lexical_cast<string>(e));
+			throw runtime_error("Stratus() caught exception " + to_string(e));
 		}
 		else
 		{

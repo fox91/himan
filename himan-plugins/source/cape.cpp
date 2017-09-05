@@ -4,8 +4,7 @@
  */
 
 #include "cape.h"
-#include "NFmiInterpolation.h"
-#include "logger_factory.h"
+#include "logger.h"
 #include "numerical_functions.h"
 #include "plugin_factory.h"
 #include "util.h"
@@ -15,8 +14,7 @@
 
 #include "fetcher.h"
 #include "hitool.h"
-#include "neons.h"
-#include "querydata.h"
+#include "radon.h"
 
 #include "cape.cuh"
 
@@ -25,6 +23,8 @@ const unsigned char FCAPE3km = (1 << 0);
 
 using namespace std;
 using namespace himan::plugin;
+using namespace himan::numerical_functions;
+using himan::IsMissingDouble;
 
 #ifdef DEBUG
 #define DumpVector(A, B) himan::util::DumpVector(A, B)
@@ -58,10 +58,10 @@ double Max(const vector<double>& vec)
 
 	for (const double& val : vec)
 	{
-		if (val != kFloatMissing && val > ret) ret = val;
+		if (!IsMissingDouble(val) && val > ret) ret = val;
 	}
 
-	if (ret == -1e38) ret = kFloatMissing;
+	if (ret == -1e38) ret = himan::MissingDouble();
 
 	return ret;
 }
@@ -70,18 +70,18 @@ void MultiplyWith(vector<double>& vec, double multiplier)
 {
 	for (double& val : vec)
 	{
-		if (val != kFloatMissing) val *= multiplier;
+		if (!IsMissingDouble(val)) val *= multiplier;
 	}
 }
 
-std::string PrintMean(const vector<double>& vec)
+string PrintMean(const vector<double>& vec)
 {
 	double min = 1e38, max = -1e38, sum = 0;
 	size_t count = 0, missing = 0;
 
 	for (const double& val : vec)
 	{
-		if (val == himan::kFloatMissing)
+		if (IsMissingDouble(val))
 		{
 			missing++;
 			continue;
@@ -100,21 +100,21 @@ std::string PrintMean(const vector<double>& vec)
 		mean = sum / static_cast<double>(count);
 	}
 
-	std::string minstr = (min == 1e38) ? "nan" : to_string(static_cast<int>(min));
-	std::string maxstr = (max == -1e38) ? "nan" : to_string(static_cast<int>(max));
-	std::string meanstr = (mean != mean) ? "nan" : to_string(static_cast<int>(mean));
+	string minstr = (min == 1e38) ? "nan" : to_string(static_cast<int>(min));
+	string maxstr = (max == -1e38) ? "nan" : to_string(static_cast<int>(max));
+	string meanstr = (mean != mean) ? "nan" : to_string(static_cast<int>(mean));
 
-	return "min " + minstr + " max " + maxstr + " mean " + meanstr + " missing " + boost::lexical_cast<string>(missing);
+	return "min " + minstr + " max " + maxstr + " mean " + meanstr + " missing " + to_string(missing);
 }
 
-void MoistLift(const double* Piter, const double* Titer, const double* Penv, double* Tparcel, int size)
+void MoistLift(const double* Piter, const double* Titer, const double* Penv, double* Tparcel, size_t size)
 {
 	// Split MoistLift (integration of a saturated air parcel upwards in atmosphere)
 	// to several threads since it is very CPU intensive
 
 	vector<future<void>> futures;
 
-	int workers = 6;
+	size_t workers = 6;
 
 	if (size % workers != 0)
 	{
@@ -129,13 +129,13 @@ void MoistLift(const double* Piter, const double* Titer, const double* Penv, dou
 		}
 	}
 
-	const int splitSize = static_cast<int>(floor(size / workers));
+	const size_t splitSize = static_cast<size_t>(floor(size / workers));
 
-	for (int num = 0; num < workers; num++)
+	for (size_t num = 0; num < workers; num++)
 	{
-		const int start = num * splitSize;
+		const size_t start = num * splitSize;
 		futures.push_back(async(launch::async,
-		                        [&](int start) {
+		                        [&](size_t start) {
 			                        himan::metutil::MoistLiftA(&Piter[start], &Titer[start], &Penv[start],
 			                                                   &Tparcel[start], splitSize);
 			                    },
@@ -150,19 +150,17 @@ void MoistLift(const double* Piter, const double* Titer, const double* Penv, dou
 
 cape::cape() : itsBottomLevel(kHybrid, kHPMissingInt)
 {
-	itsClearTextFormula = "<multiple algorithms>";
-
-	itsLogger = unique_ptr<logger>(logger_factory::Instance()->GetLog("cape"));
+	itsLogger = logger("cape");
 }
 
 void cape::Process(std::shared_ptr<const plugin_configuration> conf)
 {
 	compiled_plugin_base::Init(conf);
 
-	auto theNeons = GET_PLUGIN(neons);
+	auto r = GET_PLUGIN(radon);
 
-	itsBottomLevel = level(kHybrid, boost::lexical_cast<int>(theNeons->ProducerMetaData(
-	                                    itsConfiguration->SourceProducer().Id(), "last hybrid level number")));
+	itsBottomLevel = level(kHybrid, stoi(r->RadonDB().GetProducerMetaData(itsConfiguration->SourceProducer().Id(),
+	                                                                      "last hybrid level number")));
 
 #ifdef HAVE_CUDA
 	cape_cuda::itsBottomLevel = itsBottomLevel;
@@ -246,17 +244,16 @@ void cape::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadIndex)
 
 	auto sourceLevel = myTargetInfo->Level();
 
-	auto mySubThreadedLogger =
-	    logger_factory::Instance()->GetLog("siThread#" + boost::lexical_cast<string>(threadIndex) + "Version" +
-	                                       boost::lexical_cast<string>(static_cast<int>(sourceLevel.Type())));
+	auto mySubThreadedLogger = logger("siThread#" + boost::lexical_cast<string>(threadIndex) + "Version" +
+	                                  boost::lexical_cast<string>(static_cast<int>(sourceLevel.Type())));
 
-	mySubThreadedLogger->Info("Calculating source level type " + HPLevelTypeToString.at(sourceLevel.Type()) +
-	                          " for time " + static_cast<string>(myTargetInfo->Time().ValidDateTime()));
+	mySubThreadedLogger.Info("Calculating source level type " + HPLevelTypeToString.at(sourceLevel.Type()) +
+	                         " for time " + static_cast<string>(myTargetInfo->Time().ValidDateTime()));
 
 	// 1.
 
-	auto timer = timer_factory::Instance()->GetTimer();
-	timer->Start();
+	timer aTimer;
+	aTimer.Start();
 
 	cape_source sourceValues;
 
@@ -283,26 +280,26 @@ void cape::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadIndex)
 
 	if (get<0>(sourceValues).empty()) return;
 
-	timer->Stop();
+	aTimer.Stop();
 
-	mySubThreadedLogger->Info("Source data calculated in " + boost::lexical_cast<string>(timer->GetTime()) + " ms");
+	mySubThreadedLogger.Info("Source data calculated in " + boost::lexical_cast<string>(aTimer.GetTime()) + " ms");
 
-	mySubThreadedLogger->Debug("Source temperature: " + ::PrintMean(get<0>(sourceValues)));
-	mySubThreadedLogger->Debug("Source dewpoint: " + ::PrintMean(get<1>(sourceValues)));
-	mySubThreadedLogger->Debug("Source pressure: " + ::PrintMean(get<2>(sourceValues)));
+	mySubThreadedLogger.Debug("Source temperature: " + ::PrintMean(get<0>(sourceValues)));
+	mySubThreadedLogger.Debug("Source dewpoint: " + ::PrintMean(get<1>(sourceValues)));
+	mySubThreadedLogger.Debug("Source pressure: " + ::PrintMean(get<2>(sourceValues)));
 
 	// 2.
 
-	timer->Start();
+	aTimer.Start();
 
 	auto LCL = GetLCL(myTargetInfo, sourceValues);
 
-	timer->Stop();
+	aTimer.Stop();
 
-	mySubThreadedLogger->Info("LCL calculated in " + boost::lexical_cast<string>(timer->GetTime()) + " ms");
+	mySubThreadedLogger.Info("LCL calculated in " + boost::lexical_cast<string>(aTimer.GetTime()) + " ms");
 
-	mySubThreadedLogger->Debug("LCL temperature: " + ::PrintMean(LCL.first));
-	mySubThreadedLogger->Debug("LCL pressure: " + ::PrintMean(LCL.second));
+	mySubThreadedLogger.Debug("LCL temperature: " + ::PrintMean(LCL.first));
+	mySubThreadedLogger.Debug("LCL pressure: " + ::PrintMean(LCL.second));
 
 	myTargetInfo->Param(LCLTParam);
 	myTargetInfo->Data().Set(LCL.first);
@@ -313,6 +310,7 @@ void cape::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadIndex)
 	auto h = GET_PLUGIN(hitool);
 	h->Configuration(itsConfiguration);
 	h->Time(myTargetInfo->Time());
+	h->ForecastType(myTargetInfo->ForecastType());
 	h->HeightUnit(kHPa);
 
 	auto height = h->VerticalValue(param("HL-M"), LCL.second);
@@ -322,21 +320,21 @@ void cape::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadIndex)
 
 	// 3.
 
-	timer->Start();
+	aTimer.Start();
 
 	auto LFC = GetLFC(myTargetInfo, LCL.first, LCL.second);
 
-	timer->Stop();
+	aTimer.Stop();
 
-	mySubThreadedLogger->Info("LFC calculated in " + boost::lexical_cast<string>(timer->GetTime()) + " ms");
+	mySubThreadedLogger.Info("LFC calculated in " + boost::lexical_cast<string>(aTimer.GetTime()) + " ms");
 
 	if (LFC.first.empty())
 	{
 		return;
 	}
 
-	mySubThreadedLogger->Debug("LFC temperature: " + ::PrintMean(LFC.first));
-	mySubThreadedLogger->Debug("LFC pressure: " + ::PrintMean(LFC.second));
+	mySubThreadedLogger.Debug("LFC temperature: " + ::PrintMean(LFC.first));
+	mySubThreadedLogger.Debug("LFC pressure: " + ::PrintMean(LFC.second));
 
 	myTargetInfo->Param(LFCTParam);
 	myTargetInfo->Data().Set(LFC.first);
@@ -351,7 +349,7 @@ void cape::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadIndex)
 
 	// 4. & 5.
 
-	timer->Start();
+	aTimer.Start();
 
 	auto capeInfo = make_shared<info>(*myTargetInfo);
 	boost::thread t1(&cape::GetCAPE, this, boost::ref(capeInfo), LFC, ELTParam, ELPParam, ELZParam, CAPEParam,
@@ -364,32 +362,61 @@ void cape::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadIndex)
 	t1.join();
 	t2.join();
 
-	timer->Stop();
+	aTimer.Stop();
 
-	mySubThreadedLogger->Info("CAPE and CIN calculated in " + boost::lexical_cast<string>(timer->GetTime()) + " ms");
+	mySubThreadedLogger.Info("CAPE and CIN calculated in " + boost::lexical_cast<string>(aTimer.GetTime()) + " ms");
 
-#ifdef DEBUG
+	// Sometimes CAPE area is infinitely small -- so that CAPE is zero but LFC is found. In this case set all derivative
+	// parameters missing.
+
 	capeInfo->Param(LFCZParam);
-	auto lfcz_ = VEC(capeInfo);
+	auto& lfcz_ = VEC(capeInfo);
+	capeInfo->Param(LFCPParam);
+	auto& lfcp_ = VEC(capeInfo);
+	capeInfo->Param(LFCTParam);
+	auto& lfct_ = VEC(capeInfo);
+	cinInfo->Param(CINParam);
+	auto& cin_ = VEC(cinInfo);
 	capeInfo->Param(ELZParam);
 	auto elz_ = VEC(capeInfo);
 	capeInfo->Param(CAPEParam);
 	auto cape_ = VEC(capeInfo);
 
+	for (size_t i = 0; i < lfcz_.size(); i++)
+	{
+		if (cape_[i] == 0 && IsMissingDouble(elz_[i]) && !IsMissingDouble(lfcz_[i]))
+		{
+			cin_[i] = 0;
+			lfcz_[i] = MissingDouble();
+			lfcp_[i] = MissingDouble();
+			lfct_[i] = MissingDouble();
+		}
+	}
+
+#ifdef DEBUG
 	assert(lfcz_.size() == elz_.size());
 	assert(cape_.size() == elz_.size());
+	assert(cin_.size() == elz_.size());
 
 	for (size_t i = 0; i < lfcz_.size(); i++)
 	{
-		//		assert((lfcz_[i] == kFloatMissing && elz_[i] == kFloatMissing) ||
-		//		       ((lfcz_[i] != kFloatMissing && elz_[i] != kFloatMissing) && (lfcz_[i] < elz_[i])));
+		// Check:
+		// * If LFC is missing, EL is missing
+		// * If LFC is present, EL is present
+		// * If both are present, LFC must be below EL
+		// * CAPE must be zero or positive real value
+		// * CIN must be zero or negative real value
+		assert((IsMissingDouble(lfcz_[i]) && IsMissingDouble(elz_[i])) ||
+		       (!IsMissingDouble(lfcz_[i]) && !IsMissingDouble(elz_[i]) && (lfcz_[i] < elz_[i])));
+		assert(cape_[i] >= 0);
+		assert(cin_[i] <= 0);
 	}
 #endif
 
 	// Do smoothening for CAPE & CIN parameters
-	mySubThreadedLogger->Trace("Smoothening");
+	mySubThreadedLogger.Trace("Smoothening");
 
-	himan::matrix<double> filter_kernel(3, 3, 1, kFloatMissing, 1./9.);
+	himan::matrix<double> filter_kernel(3, 3, 1, MissingDouble(), 1. / 9.);
 
 	capeInfo->Param(CAPEParam);
 	himan::matrix<double> filtered = numerical_functions::Filter2D(capeInfo->Data(), filter_kernel);
@@ -408,13 +435,13 @@ void cape::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadIndex)
 	capeInfo->Grid()->Data(filtered);
 
 	capeInfo->Param(CAPEParam);
-	mySubThreadedLogger->Debug("CAPE: " + ::PrintMean(VEC(capeInfo)));
+	mySubThreadedLogger.Debug("CAPE: " + ::PrintMean(VEC(capeInfo)));
 	capeInfo->Param(CAPE1040Param);
-	mySubThreadedLogger->Debug("CAPE1040: " + ::PrintMean(VEC(capeInfo)));
+	mySubThreadedLogger.Debug("CAPE1040: " + ::PrintMean(VEC(capeInfo)));
 	capeInfo->Param(CAPE3kmParam);
-	mySubThreadedLogger->Debug("CAPE3km: " + ::PrintMean(VEC(capeInfo)));
+	mySubThreadedLogger.Debug("CAPE3km: " + ::PrintMean(VEC(capeInfo)));
 	cinInfo->Param(CINParam);
-	mySubThreadedLogger->Debug("CIN: " + ::PrintMean(VEC(cinInfo)));
+	mySubThreadedLogger.Debug("CIN: " + ::PrintMean(VEC(cinInfo)));
 }
 
 void cape::GetCIN(shared_ptr<info> myTargetInfo, const vector<double>& Tsource, const vector<double>& Psource,
@@ -438,13 +465,14 @@ void cape::GetCINCPU(shared_ptr<info> myTargetInfo, const vector<double>& Tsourc
 	auto h = GET_PLUGIN(hitool);
 	h->Configuration(itsConfiguration);
 	h->Time(myTargetInfo->Time());
+	h->ForecastType(myTargetInfo->ForecastType());
 	h->HeightUnit(kHPa);
 
 	vector<bool> found(Tsource.size(), false);
 
 	for (size_t i = 0; i < found.size(); i++)
 	{
-		if (PLFC[i] == kFloatMissing)
+		if (IsMissingDouble(PLFC[i]))
 		{
 			found[i] = true;
 		}
@@ -502,7 +530,7 @@ void cape::GetCINCPU(shared_ptr<info> myTargetInfo, const vector<double>& Tsourc
 		auto TenvInfo = Fetch(ftime, curLevel, param("T-K"), ftype, false);
 		auto PenvInfo = Fetch(ftime, curLevel, param("P-HPA"), ftype, false);
 
-		vector<double> TparcelVec(Piter.size(), kFloatMissing);
+		vector<double> TparcelVec(Piter.size(), MissingDouble());
 
 		// Convert pressure to Pa since metutil-library expects that
 		auto PenvVec = PenvInfo->Data().Values();
@@ -512,27 +540,38 @@ void cape::GetCINCPU(shared_ptr<info> myTargetInfo, const vector<double>& Tsourc
 
 		int i = -1;
 
-		for (auto&& tup : zip_range(VEC(TenvInfo), VEC(PenvInfo), VEC(ZenvInfo), VEC(prevZenvInfo), Titer))
+		auto& cinhref = cinh;
+
+		for (auto&& tup : zip_range(cinhref, VEC(TenvInfo), VEC(prevTenvInfo), VEC(PenvInfo), VEC(prevPenvInfo),
+		                            VEC(ZenvInfo), VEC(prevZenvInfo), TparcelVec, prevTparcelVec, Psource))
 		{
 			i++;
 
 			if (found[i]) continue;
 
-			double Tenv = tup.get<0>();  // K
+			double& cin = tup.get<0>();
+
+			double Tenv = tup.get<1>();  // K
 			assert(Tenv >= 100.);
 
-			double Penv = tup.get<1>();  // hPa
+			double prevTenv = tup.get<2>();
+
+			double Penv = tup.get<3>();  // hPa
 			assert(Penv < 1200.);
 
-			double Zenv = tup.get<2>();      // m
-			double prevZenv = tup.get<3>();  // m
+			double prevPenv = tup.get<4>();
 
-			double Tparcel = tup.get<4>();  // K
-			assert(Tparcel >= 100.);
+			double Zenv = tup.get<5>();      // m
+			double prevZenv = tup.get<6>();  // m
 
-			assert(PLFC[i] < 1200. || PLFC[i] == kFloatMissing);
+			double Tparcel = tup.get<7>();  // K
+			assert(Tparcel >= 100. || IsMissingDouble(Tparcel));
 
-			if (Penv > Psource[i])
+			double prevTparcel = tup.get<8>();  // K
+
+			double Psrc = tup.get<9>();
+
+			if (Penv > Psrc)
 			{
 				// Have not reached source level yet
 				continue;
@@ -540,38 +579,50 @@ void cape::GetCINCPU(shared_ptr<info> myTargetInfo, const vector<double>& Tsourc
 			else if (Penv <= PLFC[i])
 			{
 				// reached max height
-				// TODO: final piece integration
+
 				found[i] = true;
+
+				if (IsMissingDouble(prevTparcel) || IsMissingDouble(prevPenv) || IsMissingDouble(prevTenv))
+				{
+					continue;
+				}
+
+				// Integrate the final piece from previous level to LFC level
+
+				// First get LFC height in meters
+				Zenv = himan::numerical_functions::interpolation::Linear(PLFC[i], prevPenv, Penv, prevZenv, Zenv);
+
+				// LFC environment temperature value
+				Tenv = himan::numerical_functions::interpolation::Linear(PLFC[i], prevPenv, Penv, prevTenv, Tenv);
+
+				// LFC T parcel value
+				Tparcel =
+				    himan::numerical_functions::interpolation::Linear(PLFC[i], prevPenv, Penv, prevTparcel, Tparcel);
+
+				Penv = PLFC[i];
+				assert(Zenv > prevZenv);
+			}
+
+			if (IsMissingDouble(Tparcel))
+			{
 				continue;
 			}
 
 			if (Penv < PLCL[i])
 			{
 				// Above LCL, switch to virtual temperature
-
-				if (Tparcel == kFloatMissing) continue;
-
 				Tparcel = metutil::VirtualTemperature_(Tparcel, Penv * 100);
 				Tenv = metutil::VirtualTemperature_(Tenv, Penv * 100);
 			}
 
-			if (Tparcel <= Tenv)
-			{
-				cinh[i] += constants::kG * (Zenv - prevZenv) * ((Tparcel - Tenv) / Tenv);
-				assert(cinh[i] <= 0);
-			}
-			else if (cinh[i] != 0)
-			{
-				// Parcel buoyant --> cape layer, no more CIN. We stop integration here.
-				// TODO: final piece integration
-				found[i] = true;
-			}
+			cin += CAPE::CalcCIN(Tenv, prevTenv, Tparcel, prevTparcel, Penv, prevPenv, Zenv, prevZenv);
+			assert(cin <= 0);
 		}
 
 		foundCount = count(found.begin(), found.end(), true);
 
-		itsLogger->Trace("CIN read for " + boost::lexical_cast<string>(foundCount) + "/" +
-		                 boost::lexical_cast<string>(found.size()) + " gridpoints");
+		itsLogger.Trace("CIN read for " + boost::lexical_cast<string>(foundCount) + "/" +
+		                boost::lexical_cast<string>(found.size()) + " gridpoints");
 
 		curLevel.Value(curLevel.Value() - 1);
 
@@ -582,13 +633,13 @@ void cape::GetCINCPU(shared_ptr<info> myTargetInfo, const vector<double>& Tsourc
 
 		for (size_t i = 0; i < Titer.size(); i++)
 		{
-			if (TparcelVec[i] != kFloatMissing && PenvVec[i] != kFloatMissing)
+			if (!IsMissingDouble(TparcelVec[i]) && !IsMissingDouble(PenvVec[i]))
 			{
 				Titer[i] = TparcelVec[i];
 				Piter[i] = PenvVec[i];
 			}
 
-			if (found[i]) Titer[i] = kFloatMissing;  // by setting this we prevent MoistLift to integrate particle
+			if (found[i]) Titer[i] = MissingDouble();  // by setting this we prevent MoistLift to integrate particle
 		}
 	}
 
@@ -615,6 +666,7 @@ void cape::GetCAPE(shared_ptr<info> myTargetInfo, const pair<vector<double>, vec
 
 	h->Configuration(itsConfiguration);
 	h->Time(myTargetInfo->Time());
+	h->ForecastType(myTargetInfo->ForecastType());
 	h->HeightUnit(kHPa);
 
 	myTargetInfo->Param(ELPParam);
@@ -633,6 +685,7 @@ void cape::GetCAPECPU(shared_ptr<info> myTargetInfo, const vector<double>& T, co
 
 	h->Configuration(itsConfiguration);
 	h->Time(myTargetInfo->Time());
+	h->ForecastType(myTargetInfo->ForecastType());
 	h->HeightUnit(kHPa);
 
 	// Found count determines if we have calculated all three CAPE variation for a single grid point
@@ -641,8 +694,8 @@ void cape::GetCAPECPU(shared_ptr<info> myTargetInfo, const vector<double>& T, co
 	vector<double> CAPE(T.size(), 0);
 	vector<double> CAPE1040(T.size(), 0);
 	vector<double> CAPE3km(T.size(), 0);
-	vector<double> ELT(T.size(), kFloatMissing);
-	vector<double> ELP(T.size(), kFloatMissing);
+	vector<double> ELT(T.size(), MissingDouble());
+	vector<double> ELP(T.size(), MissingDouble());
 
 	// Unlike LCL, LFC is *not* found for all grid points
 
@@ -650,7 +703,7 @@ void cape::GetCAPECPU(shared_ptr<info> myTargetInfo, const vector<double>& T, co
 
 	for (size_t i = 0; i < P.size(); i++)
 	{
-		if (P[i] == kFloatMissing)
+		if (IsMissingDouble(P[i]))
 		{
 			found[i] |= FCAPE;
 			foundCount++;
@@ -691,7 +744,7 @@ void cape::GetCAPECPU(shared_ptr<info> myTargetInfo, const vector<double>& T, co
 		auto PenvVec = PenvInfo->Data().Values();
 		::MultiplyWith(PenvVec, 100);
 
-		vector<double> TparcelVec(P.size(), kFloatMissing);
+		vector<double> TparcelVec(P.size(), MissingDouble());
 
 		::MoistLift(&Piter[0], &Titer[0], &PenvVec[0], &TparcelVec[0], TparcelVec.size());
 
@@ -717,17 +770,17 @@ void cape::GetCAPECPU(shared_ptr<info> myTargetInfo, const vector<double>& T, co
 			double prevZenv = tup.get<2>();  // m
 
 			double Tparcel = tup.get<6>();  // K
-			assert(Tparcel > 100. || Tparcel == kFloatMissing);
+			assert(Tparcel > 100.);
 
 			double prevTparcel = tup.get<7>();  // K
-			assert(prevTparcel > 100. || Tparcel == kFloatMissing);
+			assert(prevTparcel > 100.);
 
 			if (found[i] & FCAPE)
 			{
 				continue;
 			}
-			else if (Penv == kFloatMissing || Tenv == kFloatMissing || Zenv == kFloatMissing ||
-			         prevZenv == kFloatMissing || Tparcel == kFloatMissing || Penv > P[i])
+			else if (IsMissingDouble(Penv) || IsMissingDouble(Tenv) || IsMissingDouble(Zenv) ||
+			         IsMissingDouble(prevZenv) || IsMissingDouble(Tparcel) || Penv > P[i])
 			{
 				// Missing data or current grid point is below LFC
 				continue;
@@ -736,7 +789,7 @@ void cape::GetCAPECPU(shared_ptr<info> myTargetInfo, const vector<double>& T, co
 			// When rising above LFC, get accurate value of Tenv at that level so that even small amounts of CAPE
 			// (and EL!) values can be determined.
 
-			if (prevTparcel == kFloatMissing && Tparcel != kFloatMissing)
+			if (IsMissingDouble(prevTparcel) && !IsMissingDouble(Tparcel))
 			{
 				prevTenv = himan::numerical_functions::interpolation::Linear(P[i], prevPenv, Penv, prevTenv, Tenv);
 				prevZenv = himan::numerical_functions::interpolation::Linear(P[i], prevPenv, Penv, prevZenv, Zenv);
@@ -795,7 +848,7 @@ void cape::GetCAPECPU(shared_ptr<info> myTargetInfo, const vector<double>& T, co
 			assert(CAPEval >= 0.);
 			assert(CAPE[i] < 8000);
 
-			if (ELTval != kFloatMissing)
+			if (!IsMissingDouble(ELTval))
 			{
 				ELT[i] = ELTval;
 				ELP[i] = ELPval;
@@ -810,8 +863,8 @@ void cape::GetCAPECPU(shared_ptr<info> myTargetInfo, const vector<double>& T, co
 			if (val & FCAPE) foundCount++;
 		}
 
-		itsLogger->Trace("CAPE read for " + boost::lexical_cast<string>(foundCount) + "/" +
-		                 boost::lexical_cast<string>(found.size()) + " gridpoints");
+		itsLogger.Trace("CAPE read for " + boost::lexical_cast<string>(foundCount) + "/" +
+		                boost::lexical_cast<string>(found.size()) + " gridpoints");
 		prevZenvInfo = ZenvInfo;
 		prevTenvInfo = TenvInfo;
 		prevPenvInfo = PenvInfo;
@@ -824,7 +877,7 @@ void cape::GetCAPECPU(shared_ptr<info> myTargetInfo, const vector<double>& T, co
 
 	for (size_t i = 0; i < CAPE.size(); i++)
 	{
-		if (CAPE[i] > 0 && ELT[i] == kFloatMissing)
+		if (CAPE[i] > 0 && IsMissingDouble(ELT[i]))
 		{
 			TenvInfo->LocationIndex(i);
 			PenvInfo->LocationIndex(i);
@@ -858,9 +911,10 @@ pair<vector<double>, vector<double>> cape::GetLFC(shared_ptr<info> myTargetInfo,
 
 	h->Configuration(itsConfiguration);
 	h->Time(myTargetInfo->Time());
+	h->ForecastType(myTargetInfo->ForecastType());
 	h->HeightUnit(kHPa);
 
-	itsLogger->Trace("Searching environment temperature for starting pressure");
+	itsLogger.Trace("Searching environment temperature for starting pressure");
 
 	vector<double> TenvLCL;
 
@@ -899,6 +953,7 @@ pair<vector<double>, vector<double>> cape::GetLFCCPU(shared_ptr<info> myTargetIn
 
 	h->Configuration(itsConfiguration);
 	h->Time(myTargetInfo->Time());
+	h->ForecastType(myTargetInfo->ForecastType());
 	h->HeightUnit(kHPa);
 
 	auto Piter = P, Titer = T;  // integration variables
@@ -908,8 +963,8 @@ pair<vector<double>, vector<double>> cape::GetLFCCPU(shared_ptr<info> myTargetIn
 
 	vector<bool> found(T.size(), false);
 
-	vector<double> LFCT(T.size(), kFloatMissing);
-	vector<double> LFCP(T.size(), kFloatMissing);
+	vector<double> LFCT(T.size(), MissingDouble());
+	vector<double> LFCP(T.size(), MissingDouble());
 
 	for (size_t i = 0; i < TenvLCL.size(); i++)
 	{
@@ -923,13 +978,13 @@ pair<vector<double>, vector<double>> cape::GetLFCCPU(shared_ptr<info> myTargetIn
 			found[i] = true;
 			LFCT[i] = T[i];
 			LFCP[i] = P[i];
-			Piter[i] = kFloatMissing;
+			Piter[i] = MissingDouble();
 		}
 	}
 
 	size_t foundCount = count(found.begin(), found.end(), true);
 
-	itsLogger->Debug("Found " + boost::lexical_cast<string>(foundCount) + " gridpoints that have LCL=LFC");
+	itsLogger.Debug("Found " + boost::lexical_cast<string>(foundCount) + " gridpoints that have LCL=LFC");
 
 	// For each grid point find the hybrid level that's below LCL and then pick the lowest level
 	// among all grid points; most commonly it's the lowest hybrid level
@@ -944,7 +999,7 @@ pair<vector<double>, vector<double>> cape::GetLFCCPU(shared_ptr<info> myTargetIn
 
 	auto hPa150 = h->LevelForHeight(myTargetInfo->Producer(), 150.);
 	auto hPa450 = h->LevelForHeight(myTargetInfo->Producer(), 450.);
-	vector<double> prevTparcelVec(P.size(), kFloatMissing);
+	vector<double> prevTparcelVec(P.size(), MissingDouble());
 
 	while (curLevel.Value() > hPa150.first.Value() && foundCount != found.size())
 	{
@@ -960,7 +1015,7 @@ pair<vector<double>, vector<double>> cape::GetLFCCPU(shared_ptr<info> myTargetIn
 		// of this loop the starting level is LCL. If target level level is below current level
 		// (ie. we would be lowering the particle) missing value is returned.
 
-		vector<double> TparcelVec(P.size(), kFloatMissing);
+		vector<double> TparcelVec(P.size(), MissingDouble());
 
 		::MoistLift(&Piter[0], &Titer[0], &PenvVec[0], &TparcelVec[0], TparcelVec.size());
 
@@ -989,15 +1044,15 @@ pair<vector<double>, vector<double>> cape::GetLFCCPU(shared_ptr<info> myTargetIn
 			assert(prevTenv > 100.);
 
 			double Tparcel = tup.get<4>();  // K
-			assert(Tparcel > 100.);
+			assert(Tparcel > 100. || IsMissingDouble(Tparcel));
 
 			double prevTparcel = tup.get<5>();  // K
-			assert(Tparcel > 100.);
+			assert(Tparcel > 100. || IsMissingDouble(Tparcel));
 
 			double& Tresult = tup.get<6>();
 			double& Presult = tup.get<7>();
 
-			if (Tparcel == kFloatMissing || Penv > P[i] + 30)
+			if (IsMissingDouble(Tparcel) || Penv > P[i] + 30)
 			{
 				continue;
 			}
@@ -1008,7 +1063,7 @@ pair<vector<double>, vector<double>> cape::GetLFCCPU(shared_ptr<info> myTargetIn
 
 				found[i] = true;
 
-				if (prevTparcel == kFloatMissing)
+				if (IsMissingDouble(prevTparcel))
 				{
 					// Previous value is unknown: perhaps LFC is found very close to ground?
 					// Use LCL for previous value.
@@ -1028,7 +1083,7 @@ pair<vector<double>, vector<double>> cape::GetLFCCPU(shared_ptr<info> myTargetIn
 					Tresult = intersection.X();
 					Presult = intersection.Y();
 
-					if (Tresult == kFloatMissing)
+					if (IsMissingDouble(Tresult))
 					{
 						// Intersection not found, use exact level value
 						Tresult = Tenv;
@@ -1036,8 +1091,8 @@ pair<vector<double>, vector<double>> cape::GetLFCCPU(shared_ptr<info> myTargetIn
 					}
 				}
 
-				assert(Tresult != kFloatMissing);
-				assert(Presult != kFloatMissing);
+				assert(!IsMissingDouble(Tresult));
+				assert(!IsMissingDouble(Presult));
 			}
 			else if (curLevel.Value() < hPa450.first.Value() && (Tenv - Tparcel) > 30.)
 			{
@@ -1051,26 +1106,25 @@ pair<vector<double>, vector<double>> cape::GetLFCCPU(shared_ptr<info> myTargetIn
 		curLevel.Value(curLevel.Value() - 1);
 
 		foundCount = count(found.begin(), found.end(), true);
-		itsLogger->Trace("LFC processed for " + boost::lexical_cast<string>(foundCount) + "/" +
-		                 boost::lexical_cast<string>(found.size()) + " grid points");
+		itsLogger.Trace("LFC processed for " + boost::lexical_cast<string>(foundCount) + "/" +
+		                boost::lexical_cast<string>(found.size()) + " grid points");
 
 		prevPenvInfo = PenvInfo;
 		prevTenvInfo = TenvInfo;
 
 		for (size_t i = 0; i < Titer.size(); i++)
 		{
-			if (found[i]) Titer[i] = kFloatMissing;  // by setting this we prevent MoistLift to integrate particle
+			if (found[i]) Titer[i] = MissingDouble();  // by setting this we prevent MoistLift to integrate particle
 		}
 
 		prevTparcelVec = TparcelVec;
 	}
-
 	return make_pair(LFCT, LFCP);
 }
 
 pair<vector<double>, vector<double>> cape::GetLCL(shared_ptr<info> myTargetInfo, const cape_source& sourceValues)
 {
-	vector<double> TLCL(get<0>(sourceValues).size(), kFloatMissing);
+	vector<double> TLCL(get<0>(sourceValues).size(), MissingDouble());
 	vector<double> PLCL = TLCL;
 
 	// Need surface pressure
@@ -1089,7 +1143,7 @@ pair<vector<double>, vector<double>> cape::GetLCL(shared_ptr<info> myTargetInfo,
 
 		Tresult = lcl.T;  // K
 
-		if (lcl.P != kFloatMissing)
+		if (!IsMissingDouble(lcl.P))
 		{
 			Presult = 0.01 * ((lcl.P > P) ? P : lcl.P);  // hPa
 		}
@@ -1123,11 +1177,11 @@ cape_source cape::GetSurfaceValues(shared_ptr<info> myTargetInfo)
 	auto T = VEC(TInfo);
 	auto RH = VEC(RHInfo);
 
-	vector<double> TD(T.size(), kFloatMissing);
+	vector<double> TD(T.size(), MissingDouble());
 
 	for (size_t i = 0; i < TD.size(); i++)
 	{
-		if (T[i] != kFloatMissing && RH[i] != kFloatMissing)
+		if (!IsMissingDouble(T[i]) && !IsMissingDouble(RH[i]))
 		{
 			TD[i] = metutil::DewPointFromRH_(T[i], RH[i]);
 		}
@@ -1168,6 +1222,7 @@ cape_source cape::Get500mMixingRatioValuesCPU(shared_ptr<info> myTargetInfo)
 
 	h->Configuration(itsConfiguration);
 	h->Time(myTargetInfo->Time());
+	h->ForecastType(myTargetInfo->ForecastType());
 
 	tp.HeightInMeters(false);
 	mr.HeightInMeters(false);
@@ -1185,7 +1240,7 @@ cape_source cape::Get500mMixingRatioValuesCPU(shared_ptr<info> myTargetInfo)
 		size_t miss = 0;
 		for (auto& val : VEC(PInfo))
 		{
-			if (val == kFloatMissing) miss++;
+			if (IsMissingDouble(val)) miss++;
 		}
 
 		if (PInfo->Data().MissingCount() == PInfo->Data().Size())
@@ -1214,13 +1269,13 @@ cape_source cape::Get500mMixingRatioValuesCPU(shared_ptr<info> myTargetInfo)
 		auto T = h->VerticalValue(param("T-K"), P);
 		auto RH = h->VerticalValue(param("RH-PRCNT"), P);
 
-		vector<double> Tpot(T.size(), kFloatMissing);
-		vector<double> MR(T.size(), kFloatMissing);
+		vector<double> Tpot(T.size(), MissingDouble());
+		vector<double> MR(T.size(), MissingDouble());
 
 		for (size_t i = 0; i < T.size(); i++)
 		{
 			if (found[i]) continue;
-			if (T[i] == kFloatMissing || P[i] == kFloatMissing || RH[i] == kFloatMissing) continue;
+			if (IsMissingDouble(T[i]) || IsMissingDouble(P[i]) || IsMissingDouble(RH[i])) continue;
 
 			assert(T[i] > 150 && T[i] < 350);
 			assert(P[i] > 100 && P[i] < 1500);
@@ -1237,18 +1292,18 @@ cape_source cape::Get500mMixingRatioValuesCPU(shared_ptr<info> myTargetInfo)
 
 		assert(tp.HeightsCrossed() == mr.HeightsCrossed());
 
-		itsLogger->Debug("Data read " + boost::lexical_cast<string>(foundCount) + "/" +
-		                 boost::lexical_cast<string>(found.size()) + " gridpoints");
+		itsLogger.Debug("Data read " + boost::lexical_cast<string>(foundCount) + "/" +
+		                boost::lexical_cast<string>(found.size()) + " gridpoints");
 
 		for (size_t i = 0; i < found.size(); i++)
 		{
-			assert((P[i] > 100 && P[i] < 1500) || P[i] == kFloatMissing);
+			assert((P[i] > 100 && P[i] < 1500) || IsMissingDouble(P[i]));
 
 			if (found[i])
 			{
-				P[i] = kFloatMissing;  // disable processing of this
+				P[i] = MissingDouble();  // disable processing of this
 			}
-			else if (P[i] != kFloatMissing)
+			else if (!IsMissingDouble(P[i]))
 			{
 				P[i] -= 2.0;
 			}
@@ -1261,22 +1316,22 @@ cape_source cape::Get500mMixingRatioValuesCPU(shared_ptr<info> myTargetInfo)
 	auto Psurf = Fetch(myTargetInfo->Time(), itsBottomLevel, param("P-HPA"), myTargetInfo->ForecastType(), false);
 	P = Psurf->Data().Values();
 
-	vector<double> T(Tpot.size(), kFloatMissing);
+	vector<double> T(Tpot.size(), MissingDouble());
 
 	for (size_t i = 0; i < Tpot.size(); i++)
 	{
-		assert((P[i] > 100 && P[i] < 1500) || P[i] == kFloatMissing);
-		if (Tpot[i] != kFloatMissing && P[i] != kFloatMissing)
+		assert((P[i] > 100 && P[i] < 1500) || IsMissingDouble(P[i]));
+		if (!IsMissingDouble(Tpot[i]) && !IsMissingDouble(P[i]))
 		{
 			T[i] = Tpot[i] * pow((P[i] / 1000.), 0.2854);
 		}
 	}
 
-	vector<double> TD(T.size(), kFloatMissing);
+	vector<double> TD(T.size(), MissingDouble());
 
 	for (size_t i = 0; i < MR.size(); i++)
 	{
-		if (T[i] != kFloatMissing && MR[i] != kFloatMissing && P[i] != kFloatMissing)
+		if (!IsMissingDouble(T[i]) && !IsMissingDouble(MR[i]) && !IsMissingDouble(P[i]))
 		{
 			double Es = metutil::Es_(T[i]);  // Saturated water vapor pressure
 			double E = metutil::E_(MR[i], 100 * P[i]);
@@ -1317,7 +1372,7 @@ cape_source cape::GetHighestThetaEValuesCPU(shared_ptr<info> myTargetInfo)
 	vector<bool> found(myTargetInfo->Data().Size(), false);
 
 	vector<double> maxThetaE(myTargetInfo->Data().Size(), -1);
-	vector<double> Ttheta(myTargetInfo->Data().Size(), kFloatMissing);
+	vector<double> Ttheta(myTargetInfo->Data().Size(), MissingDouble());
 	auto TDtheta = Ttheta;
 	auto Ptheta = Ttheta;
 
@@ -1352,7 +1407,7 @@ cape_source cape::GetHighestThetaEValuesCPU(shared_ptr<info> myTargetInfo)
 			double& TDresult = tup.get<5>();
 			double& Presult = tup.get<6>();
 
-			if (P == kFloatMissing)
+			if (IsMissingDouble(P))
 			{
 				found[i] = true;
 				continue;
@@ -1376,8 +1431,8 @@ cape_source cape::GetHighestThetaEValuesCPU(shared_ptr<info> myTargetInfo)
 				// Linearly interpolate temperature and humidity values to 600hPa, to check
 				// if highest theta e is found there
 
-				T = NFmiInterpolation::Linear(600., P, prevPInfo->Value(), T, prevTInfo->Value());
-				RH = NFmiInterpolation::Linear(600., P, prevPInfo->Value(), RH, prevRHInfo->Value());
+				T = interpolation::Linear(600., P, prevPInfo->Value(), T, prevTInfo->Value());
+				RH = interpolation::Linear(600., P, prevPInfo->Value(), RH, prevRHInfo->Value());
 
 				P = 600.;
 			}
@@ -1404,8 +1459,8 @@ cape_source cape::GetHighestThetaEValuesCPU(shared_ptr<info> myTargetInfo)
 			break;
 		}
 
-		itsLogger->Trace("Max ThetaE processed for " + boost::lexical_cast<string>(foundCount) + "/" +
-		                 boost::lexical_cast<string>(found.size()) + " grid points");
+		itsLogger.Trace("Max ThetaE processed for " + boost::lexical_cast<string>(foundCount) + "/" +
+		                boost::lexical_cast<string>(found.size()) + " grid points");
 
 		curLevel.Value(curLevel.Value() - 1);
 

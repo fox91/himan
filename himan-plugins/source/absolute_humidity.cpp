@@ -8,7 +8,7 @@
 #include "absolute_humidity.h"
 #include "forecast_time.h"
 #include "level.h"
-#include "logger_factory.h"
+#include "logger.h"
 
 using namespace std;
 using namespace himan::plugin;
@@ -17,8 +17,7 @@ const string itsName("absolute_humidity");
 
 absolute_humidity::absolute_humidity()
 {
-	itsClearTextFormula = "???";
-	itsLogger = unique_ptr<logger>(logger_factory::Instance()->GetLog(itsName));
+	itsLogger = logger(itsName);
 }
 
 void absolute_humidity::Process(std::shared_ptr<const plugin_configuration> conf)
@@ -45,15 +44,14 @@ void absolute_humidity::Calculate(shared_ptr<info> myTargetInfo, unsigned short 
 	const param SnowParam("SNOWMR-KGKG");      // Snow mixing ratio in kg/kg
 	const param GraupelParam("GRAUPMR-KGKG");  // Graupel mixing ratio in kg/kg
 
-	auto myThreadedLogger =
-	    logger_factory::Instance()->GetLog(itsName + "Thread #" + to_string(threadIndex));
+	auto myThreadedLogger = logger(itsName + "Thread #" + to_string(threadIndex));
 
 	forecast_time forecastTime = myTargetInfo->Time();
 	level forecastLevel = myTargetInfo->Level();
 	forecast_type forecastType = myTargetInfo->ForecastType();
 
-	myThreadedLogger->Info("Calculating time " + static_cast<string>(forecastTime.ValidDateTime()) + " level " +
-	                       static_cast<string>(forecastLevel));
+	myThreadedLogger.Info("Calculating time " + static_cast<string>(forecastTime.ValidDateTime()) + " level " +
+	                      static_cast<string>(forecastLevel));
 
 	info_t RhoInfo = Fetch(forecastTime, forecastLevel, RhoParam, forecastType, false);
 	info_t RainInfo = Fetch(forecastTime, forecastLevel, RainParam, forecastType, false);
@@ -62,8 +60,8 @@ void absolute_humidity::Calculate(shared_ptr<info> myTargetInfo, unsigned short 
 
 	if (!RhoInfo || !RainInfo || !SnowInfo || !GraupelInfo)
 	{
-		myThreadedLogger->Warning("Skipping step " + to_string(forecastTime.Step()) + ", level " +
-		                          static_cast<string>(forecastLevel));
+		myThreadedLogger.Warning("Skipping step " + to_string(forecastTime.Step()) + ", level " +
+		                         static_cast<string>(forecastLevel));
 		return;
 	}
 
@@ -82,20 +80,11 @@ void absolute_humidity::Calculate(shared_ptr<info> myTargetInfo, unsigned short 
 		const double Snow = tup.get<3>();
 		const double Graupel = tup.get<4>();
 
-		// Check if mixing ratio for rain is not missing
-		if (Rho == kFloatMissing || Rain == kFloatMissing || Snow == kFloatMissing || Graupel == kFloatMissing)
-		{
-			continue;
-		}
-
-		// Calculate absolute humidity if mixing ratio is not missing. If mixing ratio is negative use 0.0 kg/kg
+		// If mixing ratio is negative use 0.0 kg/kg
 		// instead.
-		double absolute_humidity = Rho * fmax((Rain + Snow + Graupel), 0.0);
-
-		result = absolute_humidity;
+		result = Rho * fmax((Rain + Snow + Graupel), 0.0);
 	}
 
-	myThreadedLogger->Info("[" + deviceType + "] Missing values: " +
-	                       to_string(myTargetInfo->Data().MissingCount()) + "/" +
-	                       to_string(myTargetInfo->Data().Size()));
+	myThreadedLogger.Info("[" + deviceType + "] Missing values: " + to_string(myTargetInfo->Data().MissingCount()) +
+	                      "/" + to_string(myTargetInfo->Data().Size()));
 }

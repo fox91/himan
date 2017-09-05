@@ -4,12 +4,10 @@
  */
 
 #include "hitool.h"
-#include "logger_factory.h"
+#include "logger.h"
 #include "plugin_factory.h"
 #include "util.h"
-#include <NFmiInterpolation.h>
 #include <algorithm>
-#include <boost/foreach.hpp>
 #include <boost/format.hpp>
 
 #include "fetcher.h"
@@ -24,12 +22,12 @@ double min(const vector<double>& vec)
 {
 	double ret = 1e38;
 
-	BOOST_FOREACH (double val, vec)
+	for (double val : vec)
 	{
-		if (val != kFloatMissing && val < ret) ret = val;
+		if (val < ret) ret = val;
 	}
 
-	if (ret == 1e38) ret = kFloatMissing;
+	if (ret == 1e38) ret = MissingDouble();
 
 	return ret;
 }
@@ -38,23 +36,23 @@ double max(const vector<double>& vec)
 {
 	double ret = -1e38;
 
-	BOOST_FOREACH (double val, vec)
+	for (double val : vec)
 	{
-		if (val != kFloatMissing && val > ret) ret = val;
+		if (val > ret) ret = val;
 	}
 
-	if (ret == -1e38) ret = kFloatMissing;
-
-	return ret;
+	if (ret == -1e38) ret = MissingDouble();
+        
+        return ret;
 }
 
 pair<double, double> minmax(const vector<double>& vec)
 {
 	double min = 1e38, max = -1e38;
 
-	BOOST_FOREACH (double val, vec)
+	for (double val : vec)
 	{
-		if (val != kFloatMissing)
+		if (IsValid(val))
 		{
 			if (val < min) min = val;
 			if (val > max) max = val;
@@ -63,8 +61,8 @@ pair<double, double> minmax(const vector<double>& vec)
 
 	if (min == 1e38)
 	{
-		min = kFloatMissing;
-		max = kFloatMissing;
+		min = MissingDouble();
+		max = MissingDouble();
 	}
 
 	return make_pair(min, max);
@@ -72,12 +70,12 @@ pair<double, double> minmax(const vector<double>& vec)
 
 hitool::hitool() : itsTime(), itsForecastType(kDeterministic), itsHeightUnit(kM)
 {
-	itsLogger = unique_ptr<logger>(logger_factory::Instance()->GetLog("hitool"));
+	itsLogger = logger("hitool");
 }
 
 hitool::hitool(shared_ptr<plugin_configuration> conf) : itsTime(), itsForecastType(kDeterministic), itsHeightUnit(kM)
 {
-	itsLogger = unique_ptr<logger>(logger_factory::Instance()->GetLog("hitool"));
+	itsLogger = logger("hitool");
 	itsConfiguration = conf;
 }
 
@@ -132,11 +130,11 @@ shared_ptr<modifier> hitool::CreateModifier(HPModifierType modifierType) const
 			break;
 
 		default:
-			itsLogger->Fatal("Unknown modifier type: " + boost::lexical_cast<string>(modifierType));
+			itsLogger.Fatal("Unknown modifier type: " + boost::lexical_cast<string>(modifierType));
 			abort();
 			break;
 	}
-	itsLogger->Trace("Creating " + string(HPModifierTypeToString.at(mod->Type())));
+	itsLogger.Trace("Creating " + string(HPModifierTypeToString.at(mod->Type())));
 	return mod;
 }
 
@@ -164,8 +162,8 @@ pair<level, level> hitool::LevelForHeight(const producer& prod, double height) c
 			break;
 
 		case 134:
-		case 242:
-			producerId = 242;
+		case 243:
+			producerId = 243;
 			break;
 
 		case 199:
@@ -179,7 +177,7 @@ pair<level, level> hitool::LevelForHeight(const producer& prod, double height) c
 			break;
 
 		default:
-			itsLogger->Error("Unsupported producer for hitool::LevelForHeight(): " + lexical_cast<string>(prod.Id()));
+			itsLogger.Error("Unsupported producer for hitool::LevelForHeight(): " + lexical_cast<string>(prod.Id()));
 			break;
 	}
 
@@ -339,7 +337,7 @@ vector<double> hitool::VerticalExtremeValue(shared_ptr<modifier> mod, HPLevelTyp
 		}
 		catch (const boost::bad_lexical_cast& e)
 		{
-			itsLogger->Error("Unable to get hybrid level information from database");
+			itsLogger.Error("Unable to get hybrid level information from database");
 			throw;
 		}
 	}
@@ -373,9 +371,9 @@ vector<double> hitool::VerticalExtremeValue(shared_ptr<modifier> mod, HPLevelTyp
 			double max_value = ::max(upperHeight);
 			double min_value = ::min(lowerHeight);
 
-			if (max_value == kFloatMissing || min_value == kFloatMissing)
+			if (IsMissing(max_value) || IsMissing(min_value))
 			{
-				itsLogger->Error("Min or max values of given heights are missing");
+				itsLogger.Error("Min or max values of given heights are missing");
 				throw kFileDataNotFound;
 			}
 
@@ -387,10 +385,10 @@ vector<double> hitool::VerticalExtremeValue(shared_ptr<modifier> mod, HPLevelTyp
 
 			assert(lowestHybridLevel >= highestHybridLevel);
 
-			itsLogger->Debug("Adjusting level range to " + boost::lexical_cast<string>(lowestHybridLevel) + " .. " +
-			                 boost::lexical_cast<string>(highestHybridLevel) + " for height range " +
-			                 boost::str(boost::format("%.2f") % min_value) + " .. " +
-			                 boost::str(boost::format("%.2f") % max_value) + " " + heightUnit);
+			itsLogger.Debug("Adjusting level range to " + boost::lexical_cast<string>(lowestHybridLevel) + " .. " +
+							boost::lexical_cast<string>(highestHybridLevel) + " for height range " +
+							boost::str(boost::format("%.2f") % min_value) + " .. " +
+							boost::str(boost::format("%.2f") % max_value) + " " + heightUnit);
 		}
 		break;
 
@@ -400,6 +398,12 @@ vector<double> hitool::VerticalExtremeValue(shared_ptr<modifier> mod, HPLevelTyp
 
 			double max_value = p.second;  // highest
 			double min_value = p.first;   // lowest
+
+                        if (IsMissing(max_value) || IsMissing(min_value))
+                        {
+                                itsLogger.Error("Min or max values of given heights are missing");
+                                throw kFileDataNotFound;
+                        }
 
 			if (itsHeightUnit == kHPa)
 			{
@@ -421,10 +425,10 @@ vector<double> hitool::VerticalExtremeValue(shared_ptr<modifier> mod, HPLevelTyp
 
 			assert(lowestHybridLevel >= highestHybridLevel);
 
-			itsLogger->Debug("Adjusting level range to " + boost::lexical_cast<string>(lowestHybridLevel) + " .. " +
-			                 boost::lexical_cast<string>(highestHybridLevel) + " for height range " +
-			                 boost::str(boost::format("%.2f") % min_value) + " .. " +
-			                 boost::str(boost::format("%.2f") % max_value) + " " + heightUnit);
+			itsLogger.Debug("Adjusting level range to " + boost::lexical_cast<string>(lowestHybridLevel) + " .. " +
+							boost::lexical_cast<string>(highestHybridLevel) + " for height range " +
+							boost::str(boost::format("%.2f") % min_value) + " .. " +
+							boost::str(boost::format("%.2f") % max_value) + " " + heightUnit);
 		}
 		break;
 
@@ -456,7 +460,7 @@ vector<double> hitool::VerticalExtremeValue(shared_ptr<modifier> mod, HPLevelTyp
 		             boost::lexical_cast<string>(heightsCrossed) + "/" +
 		             boost::lexical_cast<string>(values->Data().Size()) + " grid points";
 
-		itsLogger->Debug(msg);
+		itsLogger.Debug(msg);
 #endif
 	}
 
@@ -484,7 +488,7 @@ valueheight hitool::GetData(const level& wantedLevel, const param& wantedParam, 
 	}
 	else
 	{
-		itsLogger->Fatal("Invalid height unit: " + boost::lexical_cast<string>(itsHeightUnit));
+		itsLogger.Fatal("Invalid height unit: " + boost::lexical_cast<string>(itsHeightUnit));
 	}
 
 	try
@@ -557,13 +561,13 @@ vector<double> hitool::VerticalHeight(const vector<param>& wantedParamList, cons
 			{
 				if (++p_i < wantedParamList.size())
 				{
-					itsLogger->Debug("Switching parameter from " + foundParam.Name() + " to " +
-					                 wantedParamList[p_i].Name());
+					itsLogger.Debug("Switching parameter from " + foundParam.Name() + " to " +
+									wantedParamList[p_i].Name());
 					foundParam = wantedParamList[p_i];
 				}
 				else
 				{
-					itsLogger->Warning("No more valid parameters left");
+					itsLogger.Warning("No more valid parameters left");
 					throw;
 				}
 			}
@@ -678,13 +682,13 @@ vector<double> hitool::VerticalHeightGreaterThan(const vector<param>& wantedPara
 			{
 				if (++p_i < wantedParamList.size())
 				{
-					itsLogger->Debug("Switching parameter from " + foundParam.Name() + " to " +
-					                 wantedParamList[p_i].Name());
+					itsLogger.Debug("Switching parameter from " + foundParam.Name() + " to " +
+									wantedParamList[p_i].Name());
 					foundParam = wantedParamList[p_i];
 				}
 				else
 				{
-					itsLogger->Warning("No more valid parameters left");
+					itsLogger.Warning("No more valid parameters left");
 					throw;
 				}
 			}
@@ -769,13 +773,13 @@ vector<double> hitool::VerticalHeightLessThan(const vector<param>& wantedParamLi
 			{
 				if (++p_i < wantedParamList.size())
 				{
-					itsLogger->Debug("Switching parameter from " + foundParam.Name() + " to " +
-					                 wantedParamList[p_i].Name());
+					itsLogger.Debug("Switching parameter from " + foundParam.Name() + " to " +
+									wantedParamList[p_i].Name());
 					foundParam = wantedParamList[p_i];
 				}
 				else
 				{
-					itsLogger->Warning("No more valid parameters left");
+					itsLogger.Warning("No more valid parameters left");
 					throw;
 				}
 			}
@@ -831,13 +835,13 @@ vector<double> hitool::VerticalMinimum(const vector<param>& wantedParamList, con
 			{
 				if (++p_i < wantedParamList.size())
 				{
-					itsLogger->Debug("Switching parameter from " + foundParam.Name() + " to " +
-					                 wantedParamList[p_i].Name());
+					itsLogger.Debug("Switching parameter from " + foundParam.Name() + " to " +
+									wantedParamList[p_i].Name());
 					foundParam = wantedParamList[p_i];
 				}
 				else
 				{
-					itsLogger->Warning("No more valid parameters left");
+					itsLogger.Warning("No more valid parameters left");
 					throw;
 				}
 			}
@@ -899,13 +903,13 @@ vector<double> hitool::VerticalMaximum(const vector<param>& wantedParamList, con
 			{
 				if (++p_i < wantedParamList.size())
 				{
-					itsLogger->Debug("Switching parameter from " + foundParam.Name() + " to " +
-					                 wantedParamList[p_i].Name());
+					itsLogger.Debug("Switching parameter from " + foundParam.Name() + " to " +
+									wantedParamList[p_i].Name());
 					foundParam = wantedParamList[p_i];
 				}
 				else
 				{
-					itsLogger->Warning("No more valid parameters left");
+					itsLogger.Warning("No more valid parameters left");
 					throw;
 				}
 			}
@@ -964,13 +968,13 @@ vector<double> hitool::VerticalAverage(const vector<param>& wantedParamList, con
 			{
 				if (++p_i < wantedParamList.size())
 				{
-					itsLogger->Debug("Switching parameter from " + foundParam.Name() + " to " +
-					                 wantedParamList[p_i].Name());
+					itsLogger.Debug("Switching parameter from " + foundParam.Name() + " to " +
+									wantedParamList[p_i].Name());
 					foundParam = wantedParamList[p_i];
 				}
 				else
 				{
-					itsLogger->Warning("No more valid parameters left");
+					itsLogger.Warning("No more valid parameters left");
 					throw;
 				}
 			}
@@ -1021,13 +1025,13 @@ vector<double> hitool::VerticalSum(const vector<param>& wantedParamList, const v
 			{
 				if (++p_i < wantedParamList.size())
 				{
-					itsLogger->Debug("Switching parameter from " + foundParam.Name() + " to " +
-					                 wantedParamList[p_i].Name());
+					itsLogger.Debug("Switching parameter from " + foundParam.Name() + " to " +
+									wantedParamList[p_i].Name());
 					foundParam = wantedParamList[p_i];
 				}
 				else
 				{
-					itsLogger->Warning("No more valid parameters left");
+					itsLogger.Warning("No more valid parameters left");
 					throw;
 				}
 			}
@@ -1086,13 +1090,13 @@ vector<double> hitool::VerticalCount(const vector<param>& wantedParamList, const
 			{
 				if (++p_i < wantedParamList.size())
 				{
-					itsLogger->Debug("Switching parameter from " + foundParam.Name() + " to " +
-					                 wantedParamList[p_i].Name());
+					itsLogger.Debug("Switching parameter from " + foundParam.Name() + " to " +
+									wantedParamList[p_i].Name());
 					foundParam = wantedParamList[p_i];
 				}
 				else
 				{
-					itsLogger->Warning("No more valid parameters left");
+					itsLogger.Warning("No more valid parameters left");
 					throw;
 				}
 			}
@@ -1163,13 +1167,13 @@ vector<double> hitool::VerticalValue(const vector<param>& wantedParamList, const
 			{
 				if (++p_i < wantedParamList.size())
 				{
-					itsLogger->Debug("Switching parameter from " + foundParam.Name() + " to " +
-					                 wantedParamList[p_i].Name());
+					itsLogger.Debug("Switching parameter from " + foundParam.Name() + " to " +
+									wantedParamList[p_i].Name());
 					foundParam = wantedParamList[p_i];
 				}
 				else
 				{
-					itsLogger->Warning("No more valid parameters left");
+					itsLogger.Warning("No more valid parameters left");
 					throw;
 				}
 			}
@@ -1226,13 +1230,13 @@ vector<double> hitool::PlusMinusArea(const vector<param>& wantedParamList, const
 			{
 				if (++p_i < wantedParamList.size())
 				{
-					itsLogger->Debug("Switching parameter from " + foundParam.Name() + " to " +
-					                 wantedParamList[p_i].Name());
+					itsLogger.Debug("Switching parameter from " + foundParam.Name() + " to " +
+									wantedParamList[p_i].Name());
 					foundParam = wantedParamList[p_i];
 				}
 				else
 				{
-					itsLogger->Warning("No more valid parameters left");
+					itsLogger.Warning("No more valid parameters left");
 					throw;
 				}
 			}
@@ -1276,7 +1280,7 @@ void hitool::HeightUnit(HPParameterUnit theHeightUnit)
 {
 	if (theHeightUnit != kM && theHeightUnit != kHPa)
 	{
-		itsLogger->Error("Invalid height unit: " + boost::lexical_cast<string>(theHeightUnit));
+		itsLogger.Error("Invalid height unit: " + boost::lexical_cast<string>(theHeightUnit));
 		return;
 	}
 

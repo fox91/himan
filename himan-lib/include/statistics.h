@@ -7,7 +7,7 @@
 #define STATISTICS_H
 
 #include "raw_time.h"
-#include "timer_factory.h"
+#include "timer.h"
 
 #if !defined __clang__ && defined __GNUC__ && (__GNUC__ == 4 && __GNUC_MINOR__ < 5)
 #include <cstdatomic>
@@ -17,10 +17,9 @@
 
 namespace himan
 {
-
 class statistics
 {
-public:
+   public:
 	friend class plugin_configuration;
 
 	statistics();
@@ -52,10 +51,12 @@ public:
 
 	size_t FetchingTime() const;
 
-private:
+   private:
 	void Init();
 	bool StoreToDatabase();
 	bool StoreToFile();
+
+	timer itsTimer;
 
 	std::atomic<size_t> itsValueCount;
 	std::atomic<size_t> itsMissingValueCount;
@@ -66,7 +67,6 @@ private:
 	std::atomic<size_t> itsCacheMissCount;
 	std::atomic<size_t> itsCacheHitCount;
 
-	std::unique_ptr<timer> itsTimer;
 	short itsUsedThreadCount;
 	short itsUsedGPUCount;
 };

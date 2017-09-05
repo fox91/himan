@@ -34,7 +34,8 @@ configuration::configuration()
       itsCudaDeviceId(0),
       itsForecastStep(kHPMissingInt),
       itsCacheLimit(-1),
-      itsParamFile()
+      itsParamFile(),
+      itsAsyncExecution(false)
 {
 }
 
@@ -64,7 +65,8 @@ configuration::configuration(const configuration& other)
       itsCudaDeviceId(other.itsCudaDeviceId),
       itsForecastStep(other.itsForecastStep),
       itsCacheLimit(other.itsCacheLimit),
-      itsParamFile(other.itsParamFile)
+      itsParamFile(other.itsParamFile),
+      itsAsyncExecution(other.itsAsyncExecution)
 
 {
 	assert(itsSourceProducerIterator);
@@ -113,6 +115,8 @@ std::ostream& configuration::Write(std::ostream& file) const
 	}
 
 	file << "__itsParamFile__ " << itsParamFile << std::endl;
+	file << "__itsAsyncExecution__ " << itsAsyncExecution << std::endl;
+
 	return file;
 }
 
@@ -154,9 +158,9 @@ bool configuration::SourceProducer(const producer& theSourceProducer)
 	return itsSourceProducerIterator->Set(theSourceProducer);
 }
 
-bool configuration::NextSourceProducer() const { return itsSourceProducerIterator->Next(); }
-bool configuration::FirstSourceProducer() const { return itsSourceProducerIterator->First(); }
-void configuration::ResetSourceProducer() const { itsSourceProducerIterator->Reset(); }
+bool configuration::NextSourceProducer() { return itsSourceProducerIterator->Next(); }
+bool configuration::FirstSourceProducer() { return itsSourceProducerIterator->First(); }
+void configuration::ResetSourceProducer() { itsSourceProducerIterator->Reset(); }
 const producer& configuration::SourceProducer(size_t theIndexNumber) const
 {
 	if (theIndexNumber != static_cast<size_t>(kHPMissingInt))
@@ -192,11 +196,11 @@ bool configuration::UseCache() const { return itsUseCache; }
 void configuration::UseCache(bool theUseCache) { itsUseCache = theUseCache; }
 void configuration::SourceGeomNames(std::vector<std::string> theNames) { itsSourceGeomNames = theNames; }
 std::vector<std::string> configuration::SourceGeomNames() const { return itsSourceGeomNames; }
-void configuration::CudaDeviceCount(short theCudaDeviceCount) { itsCudaDeviceCount = theCudaDeviceCount; }
+void configuration::CudaDeviceCount(int theCudaDeviceCount) { itsCudaDeviceCount = theCudaDeviceCount; }
 bool configuration::HaveCuda() const { return (itsCudaDeviceCount > 0); }
-short configuration::CudaDeviceCount() const { return itsCudaDeviceCount; }
-short configuration::CudaDeviceId() const { return itsCudaDeviceId; }
-void configuration::CudaDeviceId(short theCudaDeviceId) { itsCudaDeviceId = theCudaDeviceId; }
+int configuration::CudaDeviceCount() const { return itsCudaDeviceCount; }
+int configuration::CudaDeviceId() const { return itsCudaDeviceId; }
+void configuration::CudaDeviceId(int theCudaDeviceId) { itsCudaDeviceId = theCudaDeviceId; }
 int configuration::ForecastStep() const { return itsForecastStep; }
 HPDatabaseType configuration::DatabaseType() const { return itsDatabaseType; }
 void configuration::DatabaseType(HPDatabaseType theDatabaseType) { itsDatabaseType = theDatabaseType; }
@@ -216,7 +220,6 @@ void configuration::ReadAllAuxiliaryFilesToCache(bool theReadAllAuxiliaryFilesTo
 	itsReadAllAuxiliaryFilesToCache = theReadAllAuxiliaryFilesToCache;
 }
 std::string configuration::ParamFile() const { return itsParamFile; }
-void configuration::ParamFile(const std::string& theParamFile)
-{
-	itsParamFile = theParamFile;
-}
+void configuration::ParamFile(const std::string& theParamFile) { itsParamFile = theParamFile; }
+bool configuration::AsyncExecution() const { return itsAsyncExecution; }
+void configuration::AsyncExecution(bool theAsyncExecution) { itsAsyncExecution = theAsyncExecution; }

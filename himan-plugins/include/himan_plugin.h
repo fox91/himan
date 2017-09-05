@@ -40,7 +40,7 @@ namespace plugin
 
 class himan_plugin
 {
-public:
+   public:
 	inline himan_plugin(){};
 
 	inline virtual ~himan_plugin(){};
@@ -52,7 +52,7 @@ public:
 	virtual HPVersionNumber Version() const = 0;
 
 protected:
-	std::unique_ptr<logger> itsLogger;
+	logger itsLogger;
 };
 
 // the type of the class factory

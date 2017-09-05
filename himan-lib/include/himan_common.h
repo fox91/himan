@@ -24,8 +24,10 @@
 #define override  // override specifier not support until 4.8
 #endif
 
+#include "cuda_helper.h"
 #include <boost/assign/list_of.hpp>
 #include <boost/unordered_map.hpp>
+#include <math.h>
 #include <memory>
 #include <ostream>
 #include <string>
@@ -36,11 +38,45 @@ namespace ba = boost::assign;
 
 namespace himan
 {
-// Define some constants
+// Define some missing value utilities
+inline CUDA_HOST CUDA_DEVICE double GetKHPMissingValue() {return -999.;} // Doesn't work with nan because of comparsion operator definition in several classes.
+inline CUDA_HOST CUDA_DEVICE double MissingDouble() {return nan("32700");}
+inline CUDA_HOST CUDA_DEVICE float MissingFloat() {return nanf("32700");}
 
 const int kHPMissingInt = 999999;
-const double kHPMissingValue = -999.;
-const double kFloatMissing = 32700.;  // From newbase
+const double kHPMissingValue = GetKHPMissingValue();
+//const double kFloatMissing = 32700.;
+
+inline CUDA_HOST CUDA_DEVICE bool IsMissingDouble(const double& value)
+{
+        double missingValue = MissingDouble();
+        const uint64_t* _value = reinterpret_cast<const uint64_t*>(&value);
+        const uint64_t* _missingValue = reinterpret_cast<const uint64_t*>(&missingValue);
+
+        return (*_value == *_missingValue);
+}
+
+inline CUDA_HOST CUDA_DEVICE bool IsMissingFloat(const float& value)
+{
+        double missingValue = MissingFloat();
+        const uint32_t* _value = reinterpret_cast<const uint32_t*>(&value);
+        const uint32_t* _missingValue = reinterpret_cast<const uint32_t*>(&missingValue);
+
+        return (*_value == *_missingValue);
+}
+
+inline bool IsMissing(double value) {return IsMissingDouble(value);}
+inline bool IsMissing(float value) {return IsMissingFloat(value);}
+
+inline bool IsValid(double value) { return !IsMissingDouble(value);}
+inline bool IsValid(float value) {return !IsMissingFloat(value);}
+
+template <typename T>
+inline bool IsMissing(T value) = delete; 
+template <typename T>
+inline bool IsValid(T value) = delete;
+
+inline CUDA_HOST CUDA_DEVICE bool IsKHPMissingValue(const double& x) {return x == -999;}
 
 // Define different plugin types
 
@@ -160,9 +196,8 @@ enum HPLevelType
 	kHeight = 105,
 	kHeightLayer = 106,  // layer between two metric heights from ground level
 	kHybrid = 109,
-	kGndLayer = 112,
+	kGroundDepth = 112,     // layer between two metric heights below ground level
 	kDepth = 160,
-	kDepthLayer = 161, // layer between two metric heights from depth level
 	kEntireAtmosphere = 200,
 	kEntireOcean = 201,
 	// reserved numbers starting here
@@ -179,9 +214,8 @@ const boost::unordered_map<HPLevelType, std::string> HPLevelTypeToString =
 	(kHeight, "height")
 	(kHeightLayer, "height_layer")
 	(kHybrid, "hybrid")
-	(kGndLayer, "gndlayer")
+	(kGroundDepth, "ground_depth")
 	(kDepth, "depth")
-	(kDepthLayer, "depth_layer")
 	(kTopOfAtmosphere, "top")
 	(kEntireAtmosphere, "entatm")
 	(kEntireOcean, "entocean")
@@ -198,9 +232,8 @@ const boost::unordered_map<std::string, HPLevelType> HPStringToLevelType =
 	("height", kHeight)
 	("height_layer", kHeightLayer)
 	("hybrid", kHybrid)
-	("gndlayer", kGndLayer)
+	("ground_depth", kGroundDepth)
 	("depth", kDepth)
-	("depth_layer", kDepthLayer)
 	("top", kTopOfAtmosphere)
 	("entatm", kEntireAtmosphere)
 	("entocean", kEntireOcean)

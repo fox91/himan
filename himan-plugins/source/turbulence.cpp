@@ -1,12 +1,9 @@
 /**
  * @file turbulence.cpp
  */
-
-#include <boost/lexical_cast.hpp>
-
 #include "forecast_time.h"
 #include "level.h"
-#include "logger_factory.h"
+#include "logger.h"
 #include "plugin_factory.h"
 #include "turbulence.h"
 #include "util.h"
@@ -16,9 +13,7 @@ using namespace himan::plugin;
 
 turbulence::turbulence()
 {
-	itsClearTextFormula = "complex formula";
-
-	itsLogger = logger_factory::Instance()->GetLog("turbulence");
+	itsLogger = logger("turbulence");
 }
 
 void turbulence::Process(std::shared_ptr<const plugin_configuration> conf)
@@ -82,11 +77,10 @@ void turbulence::Calculate(info_t myTargetInfo, unsigned short threadIndex)
 	nextLevel.Value(myTargetInfo->Level().Value() + 1);
 	nextLevel.Index(nextLevel.Index() + 1);
 
-	auto myThreadedLogger =
-	    logger_factory::Instance()->GetLog("turbulence_pluginThread #" + boost::lexical_cast<string>(threadIndex));
+	auto myThreadedLogger = logger("turbulence_pluginThread #" + to_string(threadIndex));
 
-	myThreadedLogger->Debug("Calculating time " + static_cast<string>(forecastTime.ValidDateTime()) + " level " +
-	                        static_cast<string>(forecastLevel));
+	myThreadedLogger.Debug("Calculating time " + static_cast<string>(forecastTime.ValidDateTime()) + " level " +
+	                       static_cast<string>(forecastLevel));
 
 	info_t UInfo, VInfo, HInfo, prevUInfo, prevVInfo, prevHInfo, nextUInfo, nextVInfo, nextHInfo;
 
@@ -104,8 +98,8 @@ void turbulence::Calculate(info_t myTargetInfo, unsigned short threadIndex)
 
 	if (!(prevHInfo && prevUInfo && prevVInfo && nextHInfo && nextUInfo && nextVInfo && HInfo && UInfo && VInfo))
 	{
-		myThreadedLogger->Info("Skipping step " + boost::lexical_cast<string>(forecastTime.Step()) + ", level " +
-		                       static_cast<string>(forecastLevel));
+		myThreadedLogger.Info("Skipping step " + to_string(forecastTime.Step()) + ", level " +
+		                      static_cast<string>(forecastLevel));
 		return;
 	}
 
@@ -126,8 +120,8 @@ void turbulence::Calculate(info_t myTargetInfo, unsigned short threadIndex)
 	size_t Ni = myTargetInfo->Grid()->Ni();
 	size_t Nj = myTargetInfo->Grid()->Nj();
 
-	vector<double> dx(Nj, kFloatMissing);
-	vector<double> dy(Ni, kFloatMissing);
+	vector<double> dx(Nj, MissingDouble());
+	vector<double> dy(Ni, MissingDouble());
 
 	for (size_t i = 0; i < Ni; ++i)
 	{
@@ -155,9 +149,7 @@ void turbulence::Calculate(info_t myTargetInfo, unsigned short threadIndex)
 		double nextV = nextVInfo->Value();
 		double nextH = nextHInfo->Value();
 
-		if (U == kFloatMissing || V == kFloatMissing || H == kFloatMissing || prevU == kFloatMissing ||
-		    prevV == kFloatMissing || prevH == kFloatMissing || nextU == kFloatMissing || nextV == kFloatMissing ||
-		    nextH == kFloatMissing)
+		if (IsMissingValue({U, V, H, prevU, prevV, prevH, nextU, nextV, nextH}))
 		{
 			continue;
 		}
@@ -170,7 +162,7 @@ void turbulence::Calculate(info_t myTargetInfo, unsigned short threadIndex)
 		double CVG = -get<0>(gradU).At(index) - get<1>(gradV).At(index);
 
 		// Calculate scaling factor
-		double S = kFloatMissing;
+		double S = MissingDouble();
 		double ScaleMax = 40;
 		double ScaleMin = 10;
 		if (WS >= ScaleMax)
@@ -198,7 +190,6 @@ void turbulence::Calculate(info_t myTargetInfo, unsigned short threadIndex)
 		myTargetInfo->Value(TI2);
 	}
 
-	myThreadedLogger->Info("[" + deviceType + "] Missing values: " +
-	                       boost::lexical_cast<string>(myTargetInfo->Data().MissingCount()) + "/" +
-	                       boost::lexical_cast<string>(myTargetInfo->Data().Size()));
+	myThreadedLogger.Info("[" + deviceType + "] Missing values: " + to_string(myTargetInfo->Data().MissingCount()) +
+	                      "/" + to_string(myTargetInfo->Data().Size()));
 }

@@ -31,6 +31,12 @@ AddOption(
 
 env = Environment()
 
+# Get color output from gcc / clang
+try:
+    env['ENV']['TERM'] = os.environ['TERM']
+except KeyError:
+    pass
+
 # Check build
 
 NOCUDA = GetOption('no-cuda-build')
@@ -74,7 +80,6 @@ env["ENV"].update(x for x in os.environ.items() if x[0].startswith("CCC_"))
 includes = []
 
 includes.append('./include')
-
 includes.append(workspace + '/himan-lib/include')
 includes.append(workspace + '/himan-plugins/include')
 includes.append('/usr/include/smartmet/newbase')
@@ -82,6 +87,7 @@ includes.append('/usr/include/gdal')
 
 if os.environ.get('ORACLE_HOME') is None:
 	includes.append('/usr/include/oracle')
+	includes.append('/usr/include/oracle/11.2/client64')
 else:
 	includes.append(os.environ.get('ORACLE_HOME') + '/rdbms/public')
 
@@ -108,6 +114,7 @@ library_paths.append('/usr/lib64')
 
 if os.environ.get('ORACLE_HOME') is None:
 	library_paths.append('/usr/lib64/oracle/')
+	library_paths.append('/usr/lib/oracle/11.2/client64/lib')
 else:
 	 library_paths.append(os.environ.get('ORACLE_HOME') + '/lib')
 
@@ -230,7 +237,7 @@ if RELEASE:
 
 if DEBUG:
 	env.Append(CCFLAGS = ['-O0'])
-	env.Append(CCFLAGS = [ '-g' ])
+	env.Append(CCFLAGS = [ '-ggdb', '-g3'])
 
 	env.Append(CCFLAGS = cflags_extra)
 	#env.Append(CCFLAGS = cflags_difficult)

@@ -6,12 +6,10 @@
 #include "stability.h"
 #include "forecast_time.h"
 #include "level.h"
-#include "logger_factory.h"
+#include "logger.h"
 #include "metutil.h"
 #include "plugin_factory.h"
 #include <algorithm>  // for std::transform
-#include <boost/foreach.hpp>
-#include <boost/lexical_cast.hpp>
 #include <boost/thread.hpp>
 #include <functional>  // for std::plus
 
@@ -56,9 +54,7 @@ void TD500mSearch(shared_ptr<const plugin_configuration> conf, const forecast_ti
 
 stability::stability() : itsLICalculation(false), itsBSCalculation(false), itsSRHCalculation(false)
 {
-	itsClearTextFormula = "<multiple algorithms>";
-
-	itsLogger = logger_factory::Instance()->GetLog("stability");
+	itsLogger = logger("stability");
 }
 
 void stability::Process(std::shared_ptr<const plugin_configuration> conf)
@@ -127,16 +123,15 @@ void stability::Calculate(shared_ptr<info> myTargetInfo, unsigned short theThrea
 	vector<double> T500mVector, TD500mVector, P500mVector, U01Vector, V01Vector, U06Vector, V06Vector, UidVector,
 	    VidVector;
 
-	auto myThreadedLogger =
-	    logger_factory::Instance()->GetLog("stabilityThread #" + boost::lexical_cast<string>(theThreadIndex));
+	auto myThreadedLogger = logger("stabilityThread #" + to_string(theThreadIndex));
 
 	forecast_time forecastTime = myTargetInfo->Time();
 	level forecastLevel = myTargetInfo->Level();
 
 	info_t T850Info, T700Info, T500Info, TD850Info, TD700Info;
 
-	myThreadedLogger->Info("Calculating time " + static_cast<string>(forecastTime.ValidDateTime()) + " level " +
-	                       static_cast<string>(forecastLevel));
+	myThreadedLogger.Info("Calculating time " + static_cast<string>(forecastTime.ValidDateTime()) + " level " +
+	                      static_cast<string>(forecastLevel));
 
 	bool LICalculation = itsLICalculation;
 	bool BSCalculation = itsBSCalculation;
@@ -145,8 +140,8 @@ void stability::Calculate(shared_ptr<info> myTargetInfo, unsigned short theThrea
 	if (!GetSourceData(T850Info, T700Info, T500Info, TD850Info, TD700Info, myTargetInfo,
 	                   itsConfiguration->UseCudaForPacking()))
 	{
-		myThreadedLogger->Warning("Skipping step " + boost::lexical_cast<string>(forecastTime.Step()) + ", level " +
-		                          static_cast<string>(forecastLevel));
+		myThreadedLogger.Warning("Skipping step " + to_string(forecastTime.Step()) + ", level " +
+		                         static_cast<string>(forecastLevel));
 		return;
 	}
 
@@ -154,7 +149,7 @@ void stability::Calculate(shared_ptr<info> myTargetInfo, unsigned short theThrea
 	{
 		if (!GetLISourceData(myTargetInfo, T500mVector, TD500mVector, P500mVector))
 		{
-			myThreadedLogger->Warning("Source data not found for param LI");
+			myThreadedLogger.Warning("Source data not found for param LI");
 			LICalculation = false;
 		}
 	}
@@ -163,7 +158,7 @@ void stability::Calculate(shared_ptr<info> myTargetInfo, unsigned short theThrea
 	{
 		if (!GetWindShearSourceData(myTargetInfo, U01Vector, V01Vector, U06Vector, V06Vector))
 		{
-			myThreadedLogger->Warning("Source data not found for param BulkShear");
+			myThreadedLogger.Warning("Source data not found for param BulkShear");
 			BSCalculation = false;
 		}
 	}
@@ -172,7 +167,7 @@ void stability::Calculate(shared_ptr<info> myTargetInfo, unsigned short theThrea
 	{
 		if (!GetSRHSourceData(myTargetInfo, UidVector, VidVector))
 		{
-			myThreadedLogger->Warning("Source data not found for param SRH");
+			myThreadedLogger.Warning("Source data not found for param SRH");
 			SRHCalculation = false;
 		}
 	}
@@ -252,13 +247,7 @@ void stability::Calculate(shared_ptr<info> myTargetInfo, unsigned short theThrea
 			assert(TD850 > 0);
 			assert(TD700 > 0);
 
-			double value = kFloatMissing;
-
-			if (T850 == kFloatMissing || T700 == kFloatMissing || T500 == kFloatMissing || TD850 == kFloatMissing ||
-			    TD700 == kFloatMissing)
-			{
-				continue;
-			}
+			double value = MissingDouble();
 
 			value = metutil::KI_(T850, T700, T500, TD850, TD700);
 			myTargetInfo->Param(KIParam);
@@ -284,17 +273,14 @@ void stability::Calculate(shared_ptr<info> myTargetInfo, unsigned short theThrea
 				double TD500m = TD500mVector[locationIndex];
 				double P500m = P500mVector[locationIndex];
 
-				assert(T500m != kFloatMissing);
-				assert(TD500m != kFloatMissing);
-				assert(P500m != kFloatMissing);
+				assert(!IsMissing(T500m));
+				assert(!IsMissing(TD500m));
+				assert(!IsMissing(P500m));
 
-				if (T500m != kFloatMissing && TD500m != kFloatMissing && P500m != kFloatMissing)
-				{
-					value = metutil::LI_(T500, T500m, TD500m, P500m);
+				value = metutil::LI_(T500, T500m, TD500m, P500m);
 
-					myTargetInfo->Param(LIParam);
-					myTargetInfo->Value(value);
-				}
+				myTargetInfo->Param(LIParam);
+				myTargetInfo->Value(value);
 
 				value = metutil::SI_(T850, T500, TD850);
 				myTargetInfo->Param(SIParam);
@@ -310,29 +296,22 @@ void stability::Calculate(shared_ptr<info> myTargetInfo, unsigned short theThrea
 				double U06 = U06Vector[locationIndex];
 				double V06 = V06Vector[locationIndex];
 
-				assert(U01 != kFloatMissing);
-				assert(V01 != kFloatMissing);
+				assert(!IsMissing(U01));
+				assert(!IsMissing(V01));
+				assert(!IsMissing(U06));
+				assert(!IsMissing(V06));
 
-				assert(U06 != kFloatMissing);
-				assert(V06 != kFloatMissing);
+				value = metutil::BulkShear_(U01, V01);
 
-				if (U01 != kFloatMissing && V01 != kFloatMissing)
-				{
-					value = metutil::BulkShear_(U01, V01);
+				myTargetInfo->Param(BS01Param);
+				myTargetInfo->Value(value);
 
-					myTargetInfo->Param(BS01Param);
-					myTargetInfo->Value(value);
-				}
+				value = metutil::BulkShear_(U06, V06);
 
-				if (U06 != kFloatMissing && V01 != kFloatMissing)
-				{
-					value = metutil::BulkShear_(U06, V06);
-
-					myTargetInfo->Param(BS06Param);
-					myTargetInfo->Value(value);
-				}
+				myTargetInfo->Param(BS06Param);
+				myTargetInfo->Value(value);
 			}
-
+#if 0
 			if (SRHCalculation)
 			{
 				size_t locationIndex = myTargetInfo->LocationIndex();
@@ -340,19 +319,19 @@ void stability::Calculate(shared_ptr<info> myTargetInfo, unsigned short theThrea
 				double Uid = UidVector[locationIndex];
 				double Vid = VidVector[locationIndex];
 
-				assert(Uid != kFloatMissing);
-				assert(Vid != kFloatMissing);
+				assert(!IsMissing(Uid));
+				assert(!IsMissing(Vid));
 
-				if (Uid != kFloatMissing && Vid != kFloatMissing)
+				if (!IsMissing(Uid) && !IsMissing(Vid))
 				{
 				}
 			}
+#endif
 		}
 	}
 
-	myThreadedLogger->Info("[" + deviceType + "] Missing values: " +
-	                       boost::lexical_cast<string>(myTargetInfo->Data().MissingCount()) + "/" +
-	                       boost::lexical_cast<string>(myTargetInfo->Data().Size()));
+	myThreadedLogger.Info("[" + deviceType + "] Missing values: " + to_string(myTargetInfo->Data().MissingCount()) +
+	                      "/" + to_string(myTargetInfo->Data().Size()));
 }
 
 void T500mSearch(shared_ptr<const plugin_configuration> conf, const forecast_time& ftime, vector<double>& result)
@@ -367,7 +346,7 @@ void T500mSearch(shared_ptr<const plugin_configuration> conf, const forecast_tim
 #ifdef DEBUG
 	for (size_t i = 0; i < result.size(); i++)
 	{
-		assert(result[i] != kFloatMissing);
+		assert(!IsMissing(result[i]));
 	}
 #endif
 }
@@ -455,7 +434,7 @@ bool stability::GetLISourceData(const shared_ptr<info>& myTargetInfo, vector<dou
 		// (maybe even in real life (Netherlands?)), but in our case we use 0 as smallest height.
 		// TODO: check how it is in smarttools
 
-		if (H0mVector[i] == kFloatMissing)
+		if (IsMissing(H0mVector[i]))
 		{
 			continue;
 		}
@@ -475,7 +454,7 @@ bool stability::GetLISourceData(const shared_ptr<info>& myTargetInfo, vector<dou
 
 	P500mVector = h->VerticalAverage(PParam, 0., 500.);
 
-	assert(P500mVector[0] != kFloatMissing);
+	assert(!IsMissing(P500mVector[0]));
 
 	if (P500mVector[0] < 1500)
 	{
@@ -527,28 +506,12 @@ vector<double> Shear(shared_ptr<const plugin_configuration> conf, const forecast
 	auto lowerValues = h->VerticalValue(wantedParam, lowerHeight);
 	auto upperValues = h->VerticalValue(wantedParam, upperHeight);
 
-	vector<double> ret(lowerValues.size(), kFloatMissing);
-
-#ifdef YES_WE_HAVE_GCC_WHICH_SUPPORTS_LAMBDAS
-	transform(lowerValues.begin(), lowerValues.end(), upperValues.begin(), back_inserter(U),
-	          [](double l, double u) { return (u == kFloatMissing || l == kFloatMissing) ? kFloatMissing : u - l; });
-	transform(lowerValues.begin(), lowerValues.end(), upperValues.begin(), back_inserter(V),
-	          [](double l, double u) { return (u == kFloatMissing || l == kFloatMissing) ? kFloatMissing : u - l; });
-#else
+	vector<double> ret(lowerValues.size(), MissingDouble());
 
 	for (size_t i = 0; i < lowerValues.size(); i++)
 	{
-		double l = lowerValues[i];
-		double u = upperValues[i];
-
-		if (u == kFloatMissing || l == kFloatMissing)
-		{
-			continue;
-		}
-
-		ret[i] = u - l;
+		ret[i] = upperValues[i] - lowerValues[i];
 	}
-#endif
 
 	return ret;
 }
@@ -606,8 +569,8 @@ bool stability::GetSRHSourceData(const shared_ptr<info>& myTargetInfo, vector<do
 	auto Vshear = Shear(itsConfiguration, myTargetInfo->Time(), param("V-MS"), 0, 6000);
 
 	// shear unit vectors
-	Uid.resize(Ushear.size(), kFloatMissing);
-	Vid.resize(Vshear.size(), kFloatMissing);
+	Uid.resize(Ushear.size(), MissingDouble());
+	Vid.resize(Vshear.size(), MissingDouble());
 
 	assert(Uid.size() == Vid.size());
 	assert(Uid.size() == Uavg.size());
@@ -616,11 +579,6 @@ bool stability::GetSRHSourceData(const shared_ptr<info>& myTargetInfo, vector<do
 	{
 		double u = Ushear[i];
 		double v = Vshear[i];
-
-		if (u == kFloatMissing || v == kFloatMissing)
-		{
-			continue;
-		}
 
 		double Uunit = u / sqrt(u * u + v * v);
 		double Vunit = v / sqrt(u * u + v * v);
@@ -638,9 +596,9 @@ void DumpVector(const vector<double>& vec)
 	double min = 1e38, max = -1e38, sum = 0;
 	size_t count = 0, missing = 0;
 
-	BOOST_FOREACH (double val, vec)
+	for (double val : vec)
 	{
-		if (val == kFloatMissing)
+		if (IsMissing(val))
 		{
 			missing++;
 			continue;

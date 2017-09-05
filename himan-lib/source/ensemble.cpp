@@ -4,12 +4,11 @@
 //
 
 #include "ensemble.h"
-#include "logger_factory.h"
 #include "plugin_factory.h"
 
+#include <numeric>
 #include <stddef.h>
 #include <stdint.h>
-#include <numeric>
 
 #define HIMAN_AUXILIARY_INCLUDE
 #include "fetcher.h"
@@ -22,7 +21,7 @@ ensemble::ensemble(const param& parameter, size_t expectedEnsembleSize)
       itsExpectedEnsembleSize(expectedEnsembleSize),
       itsForecasts(),
       itsEnsembleType(kPerturbedEnsemble),
-      itsLogger(std::unique_ptr<logger>(logger_factory::Instance()->GetLog("ensemble"))),
+      itsLogger(logger("ensemble")),
       itsMaximumMissingForecasts(0)
 {
 	itsDesiredForecasts.reserve(expectedEnsembleSize);
@@ -40,7 +39,7 @@ ensemble::ensemble(const param& parameter, size_t expectedEnsembleSize,
       itsExpectedEnsembleSize(expectedEnsembleSize),
       itsForecasts(),
       itsEnsembleType(kPerturbedEnsemble),
-      itsLogger(std::unique_ptr<logger>(logger_factory::Instance()->GetLog("ensemble"))),
+      itsLogger(logger("ensemble")),
       itsMaximumMissingForecasts(0)
 {
 	assert(controlForecasts.size() < expectedEnsembleSize);
@@ -58,9 +57,12 @@ ensemble::ensemble(const param& parameter, size_t expectedEnsembleSize,
 	}
 }
 
-ensemble::ensemble() : itsExpectedEnsembleSize(0), itsEnsembleType(kPerturbedEnsemble), itsMaximumMissingForecasts(0)
+ensemble::ensemble()
+    : itsExpectedEnsembleSize(0),
+      itsEnsembleType(kPerturbedEnsemble),
+      itsLogger(logger("ensemble")),
+      itsMaximumMissingForecasts(0)
 {
-	itsLogger = std::unique_ptr<logger>(logger_factory::Instance()->GetLog("ensemble"));
 }
 
 ensemble::~ensemble() {}
@@ -70,9 +72,9 @@ ensemble::ensemble(const ensemble& other)
       itsDesiredForecasts(other.itsDesiredForecasts),
       itsForecasts(other.itsForecasts),
       itsEnsembleType(other.itsEnsembleType),
+      itsLogger(logger("ensemble")),
       itsMaximumMissingForecasts(other.itsMaximumMissingForecasts)
 {
-	itsLogger = std::unique_ptr<logger>(logger_factory::Instance()->GetLog("ensemble"));
 }
 
 ensemble& ensemble::operator=(const ensemble& other)
@@ -84,7 +86,7 @@ ensemble& ensemble::operator=(const ensemble& other)
 	itsEnsembleType = other.itsEnsembleType;
 	itsMaximumMissingForecasts = other.itsMaximumMissingForecasts;
 
-	itsLogger = std::unique_ptr<logger>(logger_factory::Instance()->GetLog("ensemble"));
+	itsLogger = logger("ensemble");
 
 	return *this;
 }
@@ -112,7 +114,7 @@ void ensemble::Fetch(std::shared_ptr<const plugin_configuration> config, const f
 		{
 			if (e != kFileDataNotFound)
 			{
-				itsLogger->Fatal("Unable to proceed");
+				itsLogger.Fatal("Unable to proceed");
 				abort();
 			}
 			else
@@ -131,8 +133,8 @@ void ensemble::VerifyValidForecastCount(int numMissingForecasts)
 	{
 		if (numMissingForecasts >= itsMaximumMissingForecasts)
 		{
-			itsLogger->Fatal("maximum number of missing fields (" + std::to_string(itsMaximumMissingForecasts) +
-			                 ") reached, aborting");
+			itsLogger.Fatal("maximum number of missing fields (" + std::to_string(itsMaximumMissingForecasts) +
+			                ") reached, aborting");
 			abort();
 		}
 	}
@@ -142,14 +144,14 @@ void ensemble::VerifyValidForecastCount(int numMissingForecasts)
 	{
 		if (numMissingForecasts > 0)
 		{
-			itsLogger->Fatal("missing " + std::to_string(numMissingForecasts) + " of " +
-			                 std::to_string(itsMaximumMissingForecasts) + " allowed missing fields of data");
-			abort();
+			itsLogger.Fatal("missing " + std::to_string(numMissingForecasts) + " of " +
+			                std::to_string(itsMaximumMissingForecasts) + " allowed missing fields of data");
+			throw kFileDataNotFound;
 		}
 	}
 
-	itsLogger->Info("succesfully loaded " + std::to_string(itsForecasts.size()) + "/" +
-	                std::to_string(itsDesiredForecasts.size()) + " fields");
+	itsLogger.Info("succesfully loaded " + std::to_string(itsForecasts.size()) + "/" +
+	               std::to_string(itsDesiredForecasts.size()) + " fields");
 }
 
 void ensemble::ResetLocation()
@@ -189,13 +191,14 @@ std::vector<double> ensemble::Values() const
 	std::vector<double> ret;
 	ret.reserve(Size());
 
-	for (auto& f : itsForecasts)
-	{
-		ret.push_back(f->Value());
-	}
-
 	// Clients of ensemble shouldn't worry about missing values
-	ret.erase(std::remove(ret.begin(), ret.end(), kFloatMissing), ret.end());
+	std::for_each(itsForecasts.begin(), itsForecasts.end(), [&](const info_t& Info) {
+		const double v = Info->Value();
+		if (IsValid(v))
+		{
+			ret.push_back(v);
+		}
+	});
 
 	return ret;
 }
@@ -212,7 +215,7 @@ double ensemble::Mean() const
 	std::vector<double> v = Values();
 	if (v.size() == 0)
 	{
-		return kFloatMissing;
+		return MissingDouble();
 	}
 
 	return std::accumulate(v.begin(), v.end(), 0.0) / static_cast<double>(v.size());
@@ -223,7 +226,7 @@ double ensemble::Variance() const
 	std::vector<double> values = Values();
 	if (values.size() == 0)
 	{
-		return kFloatMissing;
+		return MissingDouble();
 	}
 
 	const double mean = std::accumulate(values.begin(), values.end(), 0.0) / static_cast<double>(values.size());

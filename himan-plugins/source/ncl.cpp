@@ -6,7 +6,7 @@
 #include "ncl.h"
 #include "forecast_time.h"
 #include "level.h"
-#include "logger_factory.h"
+#include "logger.h"
 #include "plugin_factory.h"
 #include <boost/lexical_cast.hpp>
 
@@ -20,8 +20,7 @@ const string itsName("ncl");
 
 ncl::ncl() : itsBottomLevel(kHPMissingInt), itsTopLevel(kHPMissingInt), itsTargetTemperature(kHPMissingInt)
 {
-	itsClearTextFormula = "???";
-	itsLogger = logger_factory::Instance()->GetLog(itsName);
+	itsLogger = logger(itsName);
 }
 
 void ncl::Process(std::shared_ptr<const plugin_configuration> conf)
@@ -87,23 +86,22 @@ void ncl::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadIndex)
 
 	level HLevel(himan::kHybrid, static_cast<float>(levelNumber), "HYBRID");
 
-	auto myThreadedLogger =
-	    logger_factory::Instance()->GetLog(itsName + "Thread #" + boost::lexical_cast<string>(threadIndex));
+	auto myThreadedLogger = logger(itsName + "Thread #" + to_string(threadIndex));
 
 	forecast_time forecastTime = myTargetInfo->Time();
 	level forecastLevel = myTargetInfo->Level();
 	forecast_type forecastType = myTargetInfo->ForecastType();
 
-	myThreadedLogger->Info("Calculating time " + static_cast<string>(forecastTime.ValidDateTime()) + " level " +
-	                       static_cast<string>(forecastLevel));
+	myThreadedLogger.Info("Calculating time " + static_cast<string>(forecastTime.ValidDateTime()) + " level " +
+						  static_cast<string>(forecastLevel));
 
 	info_t HInfo = Fetch(forecastTime, HLevel, HParam, forecastType, false);
 	info_t TInfo = Fetch(forecastTime, HLevel, TParam, forecastType, false);
 
 	if (!HInfo || !TInfo)
 	{
-		myThreadedLogger->Error("Skipping step " + boost::lexical_cast<string>(forecastTime.Step()) + ", level " +
-		                        static_cast<string>(forecastLevel));
+		myThreadedLogger.Error("Skipping step " + to_string(forecastTime.Step()) + ", level " +
+							   static_cast<string>(forecastLevel));
 		return;
 	}
 
@@ -123,7 +121,7 @@ void ncl::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadIndex)
 
 	while (--levelNumber >= itsTopLevel)
 	{
-		myThreadedLogger->Trace("Level: " + boost::lexical_cast<string>(levelNumber));
+		myThreadedLogger.Trace("Level: " + to_string(levelNumber));
 
 		if (prevHInfo)
 		{
@@ -142,8 +140,8 @@ void ncl::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadIndex)
 			double height = HInfo->Value();
 			double temp = TInfo->Value();
 
-			double prevHeight(kFloatMissing);
-			double prevTemp(kFloatMissing);
+			double prevHeight(MissingDouble());
+			double prevTemp(MissingDouble());
 
 			double targetHeight = myTargetInfo->Value();
 
@@ -156,8 +154,7 @@ void ncl::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadIndex)
 				prevTemp = prevTInfo->Value();
 			}
 
-			if (height == kFloatMissing || temp == kFloatMissing ||
-			    (!firstLevel && (prevHeight == kFloatMissing || prevTemp == kFloatMissing)))
+			if (IsMissingValue({height, temp}) || (!firstLevel && (IsMissingValue({prevHeight, prevTemp}))))
 			{
 				continue;
 			}
@@ -165,7 +162,7 @@ void ncl::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadIndex)
 			temp -= himan::constants::kKelvin;
 			prevTemp -= himan::constants::kKelvin;
 
-			if (targetHeight != -1)
+			if (targetHeight != -1 || IsMissing(targetHeight))
 			{
 				if (temp >= itsTargetTemperature)  // && levelNumber >= (itsBottomLevel - 5))
 				{
@@ -178,7 +175,7 @@ void ncl::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadIndex)
 					 * meters. When calculating height of zero level, we can take into
 					 * account this inversion so we test if the temperature at lowest level
 					 * is already below target temperature (0 or -20), and if that is the
-					 * situation we do not directly set height to kFloatMissing but
+					 * situation we do not directly set height to MissingDouble() but
 					 * move onwards and only if the temperature stays below target for
 					 * the first 5 levels (in Hirlam lowest hybrid levels are spaced ~30m
 					 * apart) we can say that surface inversion does not exist and the
@@ -214,7 +211,7 @@ void ncl::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadIndex)
 				 * temperature, set height to to missing value.
 				 */
 
-				targetHeight = kFloatMissing;
+				targetHeight = MissingDouble();
 			}
 			else if (prevTemp > itsTargetTemperature && temp < itsTargetTemperature)
 			{
@@ -248,8 +245,8 @@ void ncl::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadIndex)
 
 		if (!HInfo || !TInfo || !prevHInfo || !prevTInfo)
 		{
-			myThreadedLogger->Error("Not enough data for step " + boost::lexical_cast<string>(forecastTime.Step()) +
-			                        ", level " + static_cast<string>(forecastLevel));
+			myThreadedLogger.Error("Not enough data for step " + to_string(forecastTime.Step()) +
+								   ", level " + static_cast<string>(forecastLevel));
 			break;
 		}
 
@@ -266,13 +263,12 @@ void ncl::Calculate(shared_ptr<info> myTargetInfo, unsigned short threadIndex)
 	{
 		if (myTargetInfo->Value() == -1.)
 		{
-			myTargetInfo->Value(kFloatMissing);
+			myTargetInfo->Value(MissingDouble());
 		}
 	}
 
-	myThreadedLogger->Info("[" + deviceType + "] Missing values: " +
-	                       boost::lexical_cast<string>(myTargetInfo->Data().MissingCount()) + "/" +
-	                       boost::lexical_cast<string>(myTargetInfo->Data().Size()));
+	myThreadedLogger.Info("[" + deviceType + "] Missing values: " + to_string(myTargetInfo->Data().MissingCount()) +
+	                      "/" + to_string(myTargetInfo->Data().Size()));
 }
 
 bool ncl::CountValues(const shared_ptr<himan::info> values)
@@ -296,8 +292,7 @@ bool ncl::CountValues(const shared_ptr<himan::info> values)
 	}
 
 #ifdef DEBUG
-	itsLogger->Debug("Found value for " + boost::lexical_cast<string>(foundVals) + "/" +
-	                 boost::lexical_cast<string>(s) + " gridpoints");
+	itsLogger.Debug("Found value for " + to_string(foundVals) + "/" + to_string(s) + " gridpoints");
 
 	if (foundVals != s) return false;
 #endif

@@ -19,7 +19,6 @@
 #include "raw_time.h"
 #include "serialization.h"
 #include "station.h"
-#include "station.h"
 #include <vector>
 #define VEC(I) I->Data().Values()
 
@@ -647,10 +646,9 @@ class info
 
 	/**
 	 * @brief Set the data value pointed by the iterators with a new one
-	 * @return True if assignment was succesfull
 	 */
 
-	bool Value(double theValue);
+	void Value(double theValue);
 
 	/**
 	 * @return Data value pointed by the iterators
@@ -701,7 +699,7 @@ class info
 	void ReIndex(size_t oldForecastTypeSize, size_t oldTimeSize, size_t oldLevelSize, size_t oldParamSize);
 
 	/**
-	 * @brief Return running index nuimber when given relative index for each
+	 * @brief Return running index number when given relative index for each
 	 * three dimension
 	 *
 	 * @param timeIndex x-dimension index
@@ -722,7 +720,7 @@ class info
 
 	std::vector<std::shared_ptr<grid>> itsDimensions;
 
-	std::unique_ptr<logger> itsLogger;
+	logger itsLogger;
 
 	producer itsProducer;
 
@@ -767,7 +765,7 @@ inline grid* info::Grid(size_t timeIndex, size_t levelIndex, size_t paramIndex) 
 	return itsDimensions[Index(ForecastTypeIndex(), timeIndex, levelIndex, paramIndex)].get();
 }
 
-inline bool info::Value(double theValue) { return Grid()->Data().Set(itsLocationIndex, theValue); }
+inline void info::Value(double theValue) { Grid()->Data().Set(itsLocationIndex, theValue); }
 inline double info::Value() const { return Grid()->Data().At(itsLocationIndex); }
 typedef std::shared_ptr<info> info_t;
 

@@ -1,6 +1,6 @@
 #include "latitude_longitude_grid.h"
 #include "info.h"
-#include "logger_factory.h"
+#include <NFmiRotatedLatLonArea.h>
 
 #ifdef HAVE_CUDA
 #include "simple_packed.h"
@@ -21,7 +21,7 @@ latitude_longitude_grid::latitude_longitude_grid()
       itsNj(kHPMissingInt),
       itsIsGlobal(false)
 {
-	itsLogger = logger_factory::Instance()->GetLog("latitude_longitude_grid");
+	itsLogger = logger("latitude_longitude_grid");
 }
 
 latitude_longitude_grid::latitude_longitude_grid(HPScanningMode theScanningMode, point theBottomLeft, point theTopRight)
@@ -36,7 +36,7 @@ latitude_longitude_grid::latitude_longitude_grid(HPScanningMode theScanningMode,
       itsNj(kHPMissingInt),
       itsIsGlobal(false)
 {
-	itsLogger = logger_factory::Instance()->GetLog("latitude_longitude_grid");
+	itsLogger = logger("latitude_longitude_grid");
 	UpdateCoordinates();
 }
 
@@ -52,7 +52,7 @@ latitude_longitude_grid::latitude_longitude_grid(const latitude_longitude_grid& 
       itsNj(other.itsNj),
       itsIsGlobal(other.itsIsGlobal)
 {
-	itsLogger = logger_factory::Instance()->GetLog("latitude_longitude_grid");
+	itsLogger = logger("latitude_longitude_grid");
 }
 
 size_t latitude_longitude_grid::Size() const
@@ -161,8 +161,8 @@ point latitude_longitude_grid::LatLon(size_t locationIndex) const
 {
 	assert(itsNi != static_cast<size_t>(kHPMissingInt));
 	assert(itsNj != static_cast<size_t>(kHPMissingInt));
-	assert(Di() != kHPMissingValue);
-	assert(Dj() != kHPMissingValue);
+	assert(!IsKHPMissingValue(Di()));
+	assert(!IsKHPMissingValue(Dj()));
 	assert(locationIndex < itsNi * itsNj);
 
 	point firstPoint = FirstPoint();
@@ -216,8 +216,8 @@ bool latitude_longitude_grid::Swap(HPScanningMode newScanningMode)
 	}
 	else
 	{
-		itsLogger->Error("Swap from mode " + string(HPScanningModeToString.at(itsScanningMode)) + " to mode " +
-		                 string(HPScanningModeToString.at(newScanningMode)) + " not implemented yet");
+		itsLogger.Error("Swap from mode " + string(HPScanningModeToString.at(itsScanningMode)) + " to mode " +
+		                string(HPScanningModeToString.at(newScanningMode)) + " not implemented yet");
 		return false;
 	}
 
@@ -234,8 +234,8 @@ void latitude_longitude_grid::Di(double theDi) { itsDi = theDi; }
 void latitude_longitude_grid::Dj(double theDj) { itsDj = theDj; }
 double latitude_longitude_grid::Di() const
 {
-	if (itsDi == kHPMissingValue && itsNi != static_cast<size_t>(kHPMissingInt) &&
-	    FirstPoint().X() != kHPMissingValue && LastPoint().X() != kHPMissingValue)
+	if (IsKHPMissingValue(itsDi) && itsNi != static_cast<size_t>(kHPMissingInt) &&
+	    !IsKHPMissingValue(FirstPoint().X()) && !IsKHPMissingValue(LastPoint().X()))
 	{
 		double fx = FirstPoint().X();
 		double lx = LastPoint().X();
@@ -249,8 +249,8 @@ double latitude_longitude_grid::Di() const
 
 double latitude_longitude_grid::Dj() const
 {
-	if (itsDj == kHPMissingValue && itsNj != static_cast<size_t>(kHPMissingInt) &&
-	    FirstPoint().X() != kHPMissingValue && LastPoint().X() != kHPMissingValue)
+	if (IsKHPMissingValue(itsDj) && itsNj != static_cast<size_t>(kHPMissingInt) &&
+	    !IsKHPMissingValue(FirstPoint().X()) && !IsKHPMissingValue(LastPoint().X()))
 	{
 		itsDj = fabs((FirstPoint().Y() - LastPoint().Y()) / (static_cast<double>(itsNj) - 1.));
 	}
@@ -319,7 +319,7 @@ void latitude_longitude_grid::UpdateCoordinates() const
 	Di();
 	Dj();
 
-	if (FirstPoint() != missing && LastPoint() != missing && Di() != kHPMissingValue)
+	if (FirstPoint() != missing && LastPoint() != missing && !IsKHPMissingValue(Di()))
 	{
 		double span = itsBottomLeft.X() + itsTopRight.X() + Di();
 		itsIsGlobal = (span == 0. || span == 360.);
@@ -348,19 +348,19 @@ bool latitude_longitude_grid::EqualsTo(const latitude_longitude_grid& other) con
 
 	if (itsBottomLeft != other.BottomLeft())
 	{
-		itsLogger->Trace("BottomLeft does not match: X " + boost::lexical_cast<std::string>(itsBottomLeft.X()) +
-		                 " vs " + boost::lexical_cast<std::string>(other.BottomLeft().X()));
-		itsLogger->Trace("BottomLeft does not match: Y " + boost::lexical_cast<std::string>(itsBottomLeft.Y()) +
-		                 " vs " + boost::lexical_cast<std::string>(other.BottomLeft().Y()));
+		itsLogger.Trace("BottomLeft does not match: X " + boost::lexical_cast<std::string>(itsBottomLeft.X()) + " vs " +
+		                boost::lexical_cast<std::string>(other.BottomLeft().X()));
+		itsLogger.Trace("BottomLeft does not match: Y " + boost::lexical_cast<std::string>(itsBottomLeft.Y()) + " vs " +
+		                boost::lexical_cast<std::string>(other.BottomLeft().Y()));
 		return false;
 	}
 
 	if (itsTopRight != other.TopRight())
 	{
-		itsLogger->Trace("TopRight does not match: X " + boost::lexical_cast<std::string>(itsTopRight.X()) + " vs " +
-		                 boost::lexical_cast<std::string>(other.TopRight().X()));
-		itsLogger->Trace("TopRight does not match: Y " + boost::lexical_cast<std::string>(itsTopRight.Y()) + " vs " +
-		                 boost::lexical_cast<std::string>(other.TopRight().Y()));
+		itsLogger.Trace("TopRight does not match: X " + boost::lexical_cast<std::string>(itsTopRight.X()) + " vs " +
+		                boost::lexical_cast<std::string>(other.TopRight().X()));
+		itsLogger.Trace("TopRight does not match: Y " + boost::lexical_cast<std::string>(itsTopRight.Y()) + " vs " +
+		                boost::lexical_cast<std::string>(other.TopRight().Y()));
 		return false;
 	}
 
@@ -368,29 +368,29 @@ bool latitude_longitude_grid::EqualsTo(const latitude_longitude_grid& other) con
 
 	if (fabs(Di() - other.Di()) > kEpsilon)
 	{
-		itsLogger->Trace("Di does not match: " + boost::lexical_cast<std::string>(Di()) + " vs " +
-		                 boost::lexical_cast<std::string>(other.Di()));
+		itsLogger.Trace("Di does not match: " + boost::lexical_cast<std::string>(Di()) + " vs " +
+		                boost::lexical_cast<std::string>(other.Di()));
 		return false;
 	}
 
 	if (fabs(Dj() - other.Dj()) > kEpsilon)
 	{
-		itsLogger->Trace("Dj does not match: " + boost::lexical_cast<std::string>(Dj()) + " vs " +
-		                 boost::lexical_cast<std::string>(other.Dj()));
+		itsLogger.Trace("Dj does not match: " + boost::lexical_cast<std::string>(Dj()) + " vs " +
+		                boost::lexical_cast<std::string>(other.Dj()));
 		return false;
 	}
 
 	if (itsNi != other.Ni())
 	{
-		itsLogger->Trace("Ni does not match: " + boost::lexical_cast<std::string>(itsNi) + " vs " +
-		                 boost::lexical_cast<std::string>(other.Ni()));
+		itsLogger.Trace("Ni does not match: " + boost::lexical_cast<std::string>(itsNi) + " vs " +
+		                boost::lexical_cast<std::string>(other.Ni()));
 		return false;
 	}
 
 	if (itsNj != other.Nj())
 	{
-		itsLogger->Trace("Nj does not match: " + boost::lexical_cast<std::string>(itsNj) + " vs " +
-		                 boost::lexical_cast<std::string>(other.Nj()));
+		itsLogger.Trace("Nj does not match: " + boost::lexical_cast<std::string>(itsNj) + " vs " +
+		                boost::lexical_cast<std::string>(other.Nj()));
 		return false;
 	}
 
@@ -414,7 +414,7 @@ ostream& latitude_longitude_grid::Write(std::ostream& file) const
 rotated_latitude_longitude_grid::rotated_latitude_longitude_grid() : latitude_longitude_grid(), itsSouthPole()
 {
 	itsGridType = kRotatedLatitudeLongitude;
-	itsLogger = logger_factory::Instance()->GetLog("rotated_latitude_longitude_grid");
+	itsLogger = logger("rotated_latitude_longitude_grid");
 }
 
 rotated_latitude_longitude_grid::rotated_latitude_longitude_grid(HPScanningMode theScanningMode, point theBottomLeft,
@@ -426,14 +426,16 @@ rotated_latitude_longitude_grid::rotated_latitude_longitude_grid(HPScanningMode 
 		throw std::runtime_error("Unable to create rotated_latitude_longitude_grid with unrotated coordinates, yet");
 
 	itsGridType = kRotatedLatitudeLongitude;
-	itsLogger = logger_factory::Instance()->GetLog("rotated_latitude_longitude_grid");
+	itsLogger = logger("rotated_latitude_longitude_grid");
 }
 
 rotated_latitude_longitude_grid::rotated_latitude_longitude_grid(const rotated_latitude_longitude_grid& other)
     : latitude_longitude_grid(other), itsSouthPole(other.itsSouthPole)
 {
-	itsLogger = logger_factory::Instance()->GetLog("rotated_latitude_longitude_grid");
+	itsLogger = logger("rotated_latitude_longitude_grid");
 }
+
+rotated_latitude_longitude_grid::~rotated_latitude_longitude_grid() = default;
 
 bool rotated_latitude_longitude_grid::operator!=(const grid& other) const { return !(other == *this); }
 bool rotated_latitude_longitude_grid::operator==(const grid& other) const
@@ -457,17 +459,17 @@ bool rotated_latitude_longitude_grid::EqualsTo(const rotated_latitude_longitude_
 
 	if (itsSouthPole != other.SouthPole())
 	{
-		itsLogger->Trace("SouthPole does not match: X " + boost::lexical_cast<std::string>(itsSouthPole.X()) + " vs " +
-		                 boost::lexical_cast<std::string>(other.SouthPole().X()));
-		itsLogger->Trace("SouthPole does not match: Y " + boost::lexical_cast<std::string>(itsSouthPole.Y()) + " vs " +
-		                 boost::lexical_cast<std::string>(other.SouthPole().Y()));
+		itsLogger.Trace("SouthPole does not match: X " + boost::lexical_cast<std::string>(itsSouthPole.X()) + " vs " +
+		                boost::lexical_cast<std::string>(other.SouthPole().X()));
+		itsLogger.Trace("SouthPole does not match: Y " + boost::lexical_cast<std::string>(itsSouthPole.Y()) + " vs " +
+		                boost::lexical_cast<std::string>(other.SouthPole().Y()));
 		return false;
 	}
 
 	// Note! We DON'T test for uv relative to grid!
 	// if (itsUVRelativeToGrid != other.UVRelativeToGrid())
 	//{
-	//	itsLogger->Trace("UVRelativeToGrid does not match: " + boost::lexical_cast<std::string> (itsUVRelativeToGrid) +
+	//	itsLogger.Trace("UVRelativeToGrid does not match: " + boost::lexical_cast<std::string> (itsUVRelativeToGrid) +
 	//" vs " + boost::lexical_cast<std::string> (other.UVRelativeToGrid()));
 	//	return false;
 	//}

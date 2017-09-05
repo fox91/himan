@@ -1,7 +1,3 @@
-// System includes
-#include <iostream>
-#include <string>
-
 #include "cuda_plugin_helper.h"
 #include "dewpoint.cuh"
 #include "metutil.h"
@@ -12,14 +8,8 @@ __global__ void himan::plugin::dewpoint_cuda::Calculate(cdarr_t d_t, cdarr_t d_r
 
 	if (idx < opts.N)
 	{
-		d_td[idx] = kFloatMissing;
-
-		if (d_t[idx] != kFloatMissing && d_rh[idx] != kFloatMissing)
-		{
-			double RH = d_rh[idx] * opts.rh_scale;
-
-			d_td[idx] = metutil::DewPointFromRH_(d_t[idx] + opts.t_base, RH);
-		}
+		double RH = d_rh[idx] * opts.rh_scale;
+		d_td[idx] = metutil::DewPointFromRH_(d_t[idx] + opts.t_base, RH);
 	}
 }
 
