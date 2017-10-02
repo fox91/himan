@@ -36,7 +36,7 @@ class time_series
 			return (itsForecastTime == other.itsForecastTime && itsLevel == other.itsLevel);
 		}
 		bool operator!=(iterator other) const { return !(*this == other); }
-		himan::matrix<double> operator*() const { return itsInfo->Data(); }
+		himan::matrix<double>& operator*() const { return itsInfo->Data(); }
 	   private:
 		iterator& Next();
 		std::shared_ptr<himan::plugin::fetcher> f;
@@ -85,7 +85,7 @@ class level_series
                         return (itsForecastTime == other.itsForecastTime && itsLevel == other.itsLevel);
                 }
                 bool operator!=(iterator other) const { return !(*this == other); }
-                himan::matrix<double> operator*() const { return itsInfo->Data(); }
+                himan::matrix<double>& operator*() const { return itsInfo->Data(); }
            private:
                 iterator& Next();
                 std::shared_ptr<himan::plugin::fetcher> f;
