@@ -309,6 +309,10 @@ vector<shared_ptr<plugin_configuration>> json_parser::ParseConfigurationFile(sha
 		{
 			conf->itsOutputFileType = kQueryData;
 		}
+		else if (theFileType == "NETCDF")
+		{
+			conf->itsOutputFileType = kNetCDF;
+		}
 		else
 		{
 			throw runtime_error("Invalid option for 'file_type': " + theFileType);

@@ -12,6 +12,7 @@ includes = []
 includes.append('./include')
 includes.append('/usr/include/smartmet/newbase')
 includes.append('/usr/include/gdal')
+includes.append('/home/tackandr/c++/fminc4/include')
 
 env.Append(CPPPATH = includes)
 
@@ -35,6 +36,8 @@ libraries.append('eccodes')
 libraries.append('smartmet-newbase')
 libraries.append('boost_iostreams')
 libraries.append('boost_thread')
+libraries.append('netcdf')
+libraries.append('nc4')
 
 env.Append(LIBS = libraries)
 
