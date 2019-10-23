@@ -47,6 +47,10 @@ std::vector<T> TableToVector(const object& table);
 namespace
 {
 boost::thread_specific_ptr<lua_State> myL;
+/*struct luaDeleter {
+  void operator()(lua_State* b) { return; }
+};
+thread_local std::unique_ptr<lua_State,luaDeleter> myL;*/
 bool myUseCuda;
 }
 

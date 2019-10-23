@@ -50,6 +50,7 @@ void radon::Init()
 				NFmiRadonDBPool::Instance()->Password(util::GetEnv("RADON_WETODB_PASSWORD"));
 				NFmiRadonDBPool::Instance()->Database(radonName);
 				NFmiRadonDBPool::Instance()->Hostname(radonHost);
+				NFmiRadonDBPool::Instance()->Port(5433);
 
 				if (NFmiRadonDBPool::Instance()->MaxWorkers() < MAX_WORKERS)
 				{

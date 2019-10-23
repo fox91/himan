@@ -10,6 +10,7 @@
 #include "cache.h"
 #include "csv.h"
 #include "grib.h"
+#include "netcdf4.h"
 #include "querydata.h"
 #include "radon.h"
 
@@ -84,8 +85,14 @@ bool writer::CreateFile(info<T>& theInfo, std::shared_ptr<const plugin_configura
 			return theWriter->ToFile<T>(theInfo, theOutputFile);
 		}
 		case kNetCDF:
-			break;
+		{
+			auto theNetcdfWriter = GET_PLUGIN(netcdf4);
+			theNetcdfWriter->WriteOptions(itsWriteOptions);
 
+			theOutputFile += ".nc4";
+
+			return theNetcdfWriter->ToFile<T>(theInfo, theOutputFile);
+		}
 		case kCSV:
 		{
 			auto theWriter = GET_PLUGIN(csv);
