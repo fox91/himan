@@ -17,6 +17,7 @@
 #include "fetcher.h"
 #include "radon.h"
 #include "writer.h"
+#include "netcdf4.h"
 
 using namespace std;
 using namespace himan;
@@ -412,8 +413,15 @@ void compiled_plugin_base::Start()
 
 	SetThreadCount();
 	SetInitialIteratorPositions();
-
 	itsBaseLogger.Info("Plugin is using data type: " + TypeToName<T>());
+
+	//------------------------------------------------------------------------------------------------
+        if(itsConfiguration->OutputFileType() == kNetCDF)
+        {
+                auto n = GET_PLUGIN(netcdf4);
+		n->InitFile(*baseInfo, util::MakeFileName(itsConfiguration->FileWriteOption(), *baseInfo, *itsConfiguration));
+        }
+	//------------------------------------------------------------------------------------------------
 
 	vector<thread> threads;
 

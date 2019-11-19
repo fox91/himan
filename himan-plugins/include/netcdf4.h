@@ -37,6 +37,12 @@ class netcdf4 : public io_plugin
 	template <typename T>
 	bool ToFile(info<T>& anInfo, std::string& outputFile, bool appendToFile = false);
 	bool ToFile(info<double>& anInfo, std::string& outputFile, bool appendToFile = false);
+
+	template <typename T>
+	bool InitFile(const info<T>& baseInfo, const std::string& outputFile);
+
+	template <typename T>
+	std::vector<std::shared_ptr<himan::info<T>>> FromFile(const std::string& theInputFile, const search_options& options) const;
 };
 
 #ifndef HIMAN_AUXILIARY_INCLUDE

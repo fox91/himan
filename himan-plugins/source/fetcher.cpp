@@ -16,6 +16,7 @@
 #include "param.h"
 #include "querydata.h"
 #include "radon.h"
+#include "netcdf4.h"
 
 using namespace himan;
 using namespace himan::plugin;
@@ -402,8 +403,11 @@ vector<shared_ptr<info<T>>> fetcher::FromFile(const vector<string>& files, searc
 				throw runtime_error("QueryData as input is not supported");
 
 			case kNetCDF:
-				throw runtime_error("NetCDF as input is not supported");
-
+			{
+				auto n = GET_PLUGIN(netcdf4);
+				curInfos = n->FromFile<T>(inputFile, options);
+				break;
+			}
 			case kCSV:
 			{
 				auto c = GET_PLUGIN(csv);

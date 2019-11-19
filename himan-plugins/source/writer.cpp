@@ -89,7 +89,7 @@ bool writer::CreateFile(info<T>& theInfo, std::shared_ptr<const plugin_configura
 			auto theNetcdfWriter = GET_PLUGIN(netcdf4);
 			theNetcdfWriter->WriteOptions(itsWriteOptions);
 
-			theOutputFile += ".nc4";
+			//theOutputFile += ".nc4";
 
 			return theNetcdfWriter->ToFile<T>(theInfo, theOutputFile);
 		}

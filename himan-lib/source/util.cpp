@@ -21,6 +21,7 @@
 #include <iomanip>
 #include <sstream>
 #include <wordexp.h>
+#include "plugin_configuration.h"
 
 #define HIMAN_AUXILIARY_INCLUDE
 #include "cache.h"
@@ -76,7 +77,7 @@ string util::MakeFileName(HPFileWriteOption fileWriteOption, const info<T>& info
 
 	// Create a unique file name when creating multiple files from one info
 
-	if (fileWriteOption == kDatabase || fileWriteOption == kMultipleFiles)
+	if ((fileWriteOption == kDatabase || fileWriteOption == kMultipleFiles) && conf.OutputFileType() != kNetCDF)
 	{
 		fileName << base.str() << "/" << par.Name() << "_" << HPLevelTypeToString.at(lvl.Type()) << "_" << lvl.Value();
 
@@ -119,10 +120,36 @@ string util::MakeFileName(HPFileWriteOption fileWriteOption, const info<T>& info
 	}
 	else
 	{
-		// TODO!
+		auto type = info.template Iterator<forecast_type>().Values();
+		auto time = info.template Iterator<forecast_time>().Values();
+		auto lev = info.template Iterator<level>().Values();
 
-		fileName << base.str() << "/"
-		         << "TODO.file";
+		// TODO!
+		const plugin_configuration* pconf = reinterpret_cast <const plugin_configuration*>(&conf);
+		fileName << base.str() << "/" << pconf->Name();
+
+		fileName << "_" << HPLevelTypeToString.at(lvl.Type()) << "_" << lev.front().Value();
+
+		if(lev.size() > 1)
+		{
+		         fileName << "-" << lev.back().Value();
+		}
+
+		fileName << "_" << HPGridTypeToString.at(info.Grid()->Type());
+
+		if (info.Grid()->Class() == kRegularGrid)
+                {
+                        fileName << "_" << dynamic_pointer_cast<regular_grid>(info.Grid())->Ni() << "_"
+                                 << dynamic_pointer_cast<regular_grid>(info.Grid())->Nj();
+                }
+
+		if(static_cast<int>(ftype.Type()) > 2)
+		{
+			fileName << "_" << static_cast<int>(ftype.Type()) << type.front().Value() << "-" << type.back().Value();
+		}
+
+		fileName << "_" << setw(3) << setfill('0') << time.front().Step().Hours() << "-" << setw(3) << setfill('0') << time.back().Step().Hours()
+		         << ".nc";
 	}
 
 	return fileName.str();
