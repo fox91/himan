@@ -263,22 +263,22 @@ const boost::unordered_map<std::string, HPLevelType> HPStringToLevelType =
 	("maxthetae", kMaximumThetaE);
 
 
-enum HPFileWriteOption
+enum HPWriteMode
 {
-	kUnknownFileWriteOption = 0,
-	kSingleFile,
-	kMultipleFiles,
-	kDatabase,
-	kCacheOnly
+	kUnknown = 0,
+	kAllGridsToAFile,
+	kFewGridsToAFile,
+	kSingleGridToAFile,
+	kNoFileWrite
 };
 
-const boost::unordered_map<HPFileWriteOption, std::string> HPFileWriteOptionToString =
+const boost::unordered_map<HPWriteMode, std::string> HPWriteModeToString =
     ba::map_list_of
-	(kUnknownFileWriteOption, "unknown")
-	(kSingleFile, "single file only")
-	(kMultipleFiles, "multiple files")
-	(kDatabase, "write to database")
-	(kCacheOnly, "cache only");
+	(kUnknown, "unknown")
+	(kAllGridsToAFile, "all fields to single file")
+	(kFewGridsToAFile, "few fields to a file")
+	(kSingleGridToAFile, "one field per file")
+	(kNoFileWrite, "do not write file at all");
 
 /**
  * @enum HPScanningMode
@@ -318,7 +318,8 @@ enum HPExceptionType
 	kUnknownException = 0,
 	kFileMetaDataNotFound,
 	kFileDataNotFound,
-	kFunctionNotImplemented
+	kFunctionNotImplemented,
+	kInvalidWriteOptions
 };
 
 enum HPTimeResolution
@@ -374,6 +375,37 @@ const boost::unordered_map<HPAggregationType, std::string> HPAggregationTypeToSt
 	(kAccumulation, "accumulation")
 	(kMaximum, "maximum")(kMinimum, "minimum")
 	(kDifference, "difference");
+
+enum HPProcessingType
+{
+	kUnknownProcessingType = 0,
+	kProbabilityGreaterThan,
+	kProbabilityLessThan,
+	kProbabilityBetween,
+	kProbabilityEquals,
+	kProbabilityNotEquals,
+	kProbabilityEqualsIn,
+	kFractile,
+	kEnsembleMean, // to differ from aggregation 'average'
+	kSpread,
+	kStandardDeviation,
+	kEFI
+};
+
+const boost::unordered_map<HPProcessingType, std::string> HPProcessingTypeToString =
+    ba::map_list_of
+	(kUnknownProcessingType, "unknown")
+	(kProbabilityGreaterThan, "probability greater than")
+	(kProbabilityLessThan, "probability less than")
+	(kProbabilityBetween, "probability between")
+	(kProbabilityEquals, "probability equals")
+	(kProbabilityNotEquals, "probability is not equal to")
+	(kProbabilityEqualsIn, "probability equal to value in list")
+	(kFractile, "fractile")
+	(kEnsembleMean, "ensemble mean")
+	(kSpread, "spread")
+	(kStandardDeviation, "standard deviation")
+	(kEFI, "efi");
 
 enum HPModifierType
 {
@@ -532,6 +564,20 @@ const boost::unordered_map<std::string, HPProducerClass> HPStringToProducerClass
 	("unknown", kUnknownProducerClass)
 	("grid", kGridClass)
 	("previ", kPreviClass)
+	;
+
+enum HPFileStorageType
+{
+	kUnknownStorageType = 0,
+	kLocalFileSystem,
+	kS3ObjectStorageSystem
+};
+
+const boost::unordered_map<HPFileStorageType, std::string> HPFileStorageTypeToString =
+    ba::map_list_of
+	(kUnknownStorageType, "unknown")
+	(kLocalFileSystem, "local file system")
+	(kS3ObjectStorageSystem, "s3 object storage system")
 	;
 
 // clang-format on

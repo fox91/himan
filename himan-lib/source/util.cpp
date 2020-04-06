@@ -32,8 +32,13 @@ using namespace himan;
 using namespace std;
 
 template <typename T>
-string util::MakeFileName(HPFileWriteOption fileWriteOption, const info<T>& info, const configuration& conf)
+string util::MakeFileName(const info<T>& info, const plugin_configuration& conf)
 {
+	if (conf.WriteMode() == kNoFileWrite)
+	{
+		return "";
+	}
+
 	ostringstream fileName;
 	ostringstream base;
 
@@ -44,9 +49,9 @@ string util::MakeFileName(HPFileWriteOption fileWriteOption, const info<T>& info
 
 	base.str(".");
 
-	// For neons get base directory
+	// For database writes get base directory
 
-	if (fileWriteOption == kDatabase)
+	if (conf.WriteToDatabase())
 	{
 		char* path;
 
@@ -62,22 +67,33 @@ string util::MakeFileName(HPFileWriteOption fileWriteOption, const info<T>& info
 			cout << "Warning::util MASALA_PROCESSED_DATA_BASE not set" << endl;
 		}
 
+		// directory structure when writing to database:
+		//
+		// all:
+		//   /path/to/files/<producer_id>/<analysis_time>/<geometry_name>
+		// few:
+		//   /path/to/files/<producer_id>/<analysis_time>/<geometry_name>
+		// single:
+		//   /path/to/files/<producer_id>/<analysis_time>/<geometry_name>/<step>
+
 		base << "/" << info.Producer().Id() << "/" << ftime.OriginDateTime().String("%Y%m%d%H%M") << "/"
 		     << conf.TargetGeomName() << "/";
 
-		if (ftime.Step().Minutes() % 60 != 0)
+		if (conf.WriteMode() == kSingleGridToAFile)
 		{
-			base << ftime.Step().Minutes();
-		}
-		else
-		{
-			base << ftime.Step().Hours();
+			if (ftime.Step().Minutes() % 60 != 0)
+			{
+				base << ftime.Step().Minutes();
+			}
+			else
+			{
+				base << ftime.Step().Hours();
+			}
 		}
 	}
-
 	// Create a unique file name when creating multiple files from one info
 
-	if ((fileWriteOption == kDatabase || fileWriteOption == kMultipleFiles) && conf.OutputFileType() != kNetCDF)
+	if (conf.WriteMode() == kSingleGridToAFile)
 	{
 		fileName << base.str() << "/" << par.Name() << "_" << HPLevelTypeToString.at(lvl.Type()) << "_" << lvl.Value();
 
@@ -118,45 +134,32 @@ string util::MakeFileName(HPFileWriteOption fileWriteOption, const info<T>& info
 			fileName << "_" << static_cast<int>(ftype.Type()) << "_" << ftype.Value();
 		}
 	}
-	else
+	else if (conf.WriteMode() == kFewGridsToAFile)
 	{
-		auto type = info.template Iterator<forecast_type>().Values();
-		auto time = info.template Iterator<forecast_time>().Values();
-		auto lev = info.template Iterator<level>().Values();
-
-		// TODO!
-		const plugin_configuration* pconf = reinterpret_cast <const plugin_configuration*>(&conf);
-		fileName << base.str() << "/" << pconf->Name();
-
-		fileName << "_" << HPLevelTypeToString.at(lvl.Type()) << "_" << lev.front().Value();
-
-		if(lev.size() > 1)
+		fileName << base.str() << "/"
+		         << "fc" << ftime.OriginDateTime().String("%Y%m%d%H%M") << "+" << setw(3) << setfill('0')
+		         << ftime.Step().Hours() << "h" << setw(2) << setfill('0') << (ftime.Step().Minutes() % 60) << "m_"
+		         << conf.Name() << "#" << conf.RelativeOrdinalNumber();
+	}
+	else if (conf.WriteMode() == kAllGridsToAFile)
+	{
+		if (conf.LegacyWriteMode())
 		{
-		         fileName << "-" << lev.back().Value();
+			fileName << base.str() << "/" << conf.ConfigurationFile();
 		}
-
-		fileName << "_" << HPGridTypeToString.at(info.Grid()->Type());
-
-		if (info.Grid()->Class() == kRegularGrid)
-                {
-                        fileName << "_" << dynamic_pointer_cast<regular_grid>(info.Grid())->Ni() << "_"
-                                 << dynamic_pointer_cast<regular_grid>(info.Grid())->Nj();
-                }
-
-		if(static_cast<int>(ftype.Type()) > 2)
+		else
 		{
-			fileName << "_" << static_cast<int>(ftype.Type()) << type.front().Value() << "-" << type.back().Value();
+			fileName << base.str() << "/"
+			         << "fc" << ftime.OriginDateTime().String("%Y%m%d%H%M") << "+" << setw(3) << setfill('0')
+			         << ftime.Step().Hours() << "h" << setw(2) << setfill('0') << (ftime.Step().Minutes() % 60) << "m";
 		}
-
-		fileName << "_" << setw(3) << setfill('0') << time.front().Step().Hours() << "-" << setw(3) << setfill('0') << time.back().Step().Hours()
-		         << ".nc";
 	}
 
 	return fileName.str();
 }
 
-template string util::MakeFileName<double>(HPFileWriteOption, const info<double>&, const configuration&);
-template string util::MakeFileName<float>(HPFileWriteOption, const info<float>&, const configuration&);
+template string util::MakeFileName<double>(const info<double>&, const plugin_configuration&);
+template string util::MakeFileName<float>(const info<float>&, const plugin_configuration&);
 
 himan::HPFileType util::FileType(const string& theFile)
 {
@@ -309,112 +312,6 @@ string util::Join(const vector<string>& elements, const string& delim)
 	}
 
 	return s.str();
-}
-
-tuple<double, double, double, double> util::EarthRelativeUVCoefficients(const himan::point& regPoint,
-                                                                        const himan::point& rotPoint,
-                                                                        const himan::point& southPole)
-{
-	point newSouthPole;
-
-	if (southPole.Y() > 0)
-	{
-		newSouthPole.Y(-southPole.Y());
-		newSouthPole.X(0);
-	}
-	else
-	{
-		newSouthPole = southPole;
-	}
-
-	double southPoleY = constants::kDeg * (newSouthPole.Y() + 90);
-	double sinPoleY, cosPoleY;
-
-	sincos(southPoleY, &sinPoleY, &cosPoleY);
-
-	double cosRegY = cos(constants::kDeg * regPoint.Y());  // zcyreg
-
-	double zxmxc = constants::kDeg * (regPoint.X() - newSouthPole.X());
-
-	double sinxmxc, cosxmxc;
-
-	sincos(zxmxc, &sinxmxc, &cosxmxc);
-
-	double rotXRad = constants::kDeg * rotPoint.X();
-	double rotYRad = constants::kDeg * rotPoint.Y();
-
-	double sinRotX, cosRotX;
-	sincos(rotXRad, &sinRotX, &cosRotX);
-
-	double sinRotY, cosRotY;
-	sincos(rotYRad, &sinRotY, &cosRotY);
-
-	double PA = cosxmxc * cosRotX + cosPoleY * sinxmxc * sinRotX;
-	double PB = cosPoleY * sinxmxc * cosRotX * sinRotY + sinPoleY * sinxmxc * cosRotY - cosxmxc * sinRotX * sinRotY;
-	double PC = (-sinPoleY) * sinRotX / cosRegY;
-	double PD = (cosPoleY * cosRotY - sinPoleY * cosRotX * sinRotY) / cosRegY;
-
-	return make_tuple(PA, PB, PC, PD);
-}
-
-tuple<double, double, double, double> util::GridRelativeUVCoefficients(const himan::point& regPoint,
-                                                                       const himan::point& rotPoint,
-                                                                       const himan::point& southPole)
-{
-	point newSouthPole;
-
-	if (southPole.Y() > 0)
-	{
-		newSouthPole.Y(-southPole.Y());
-		newSouthPole.X(0);
-	}
-	else
-	{
-		newSouthPole = southPole;
-	}
-
-	double sinPoleY = sin(constants::kDeg * (newSouthPole.Y() + 90));  // zsyc
-	double cosPoleY = cos(constants::kDeg * (newSouthPole.Y() + 90));  // zcyc
-
-	// double sinRegX = sin(constants::kDeg * regPoint.X()); // zsxreg
-	// double cosRegX = cos(constants::kDeg * regPoint.X()); // zcxreg
-	double sinRegY = sin(constants::kDeg * regPoint.Y());  // zsyreg
-	double cosRegY = cos(constants::kDeg * regPoint.Y());  // zcyreg
-
-	double zxmxc = constants::kDeg * (regPoint.X() - newSouthPole.X());
-	double sinxmxc = sin(zxmxc);  // zsxmxc
-	double cosxmxc = cos(zxmxc);  // zcxmxc
-
-	double sinRotX = sin(constants::kDeg * rotPoint.X());  // zsxrot
-	double cosRotX = cos(constants::kDeg * rotPoint.X());  // zcxrot
-	// double sinRotY = sin(constants::kDeg * rotPoint.Y()); // zsyrot
-	double cosRotY = cos(constants::kDeg * rotPoint.Y());  // zcyrot
-
-	double PA = cosPoleY * sinxmxc * sinRotX + cosxmxc * cosRotX;
-	double PB = cosPoleY * cosxmxc * sinRegY * sinRotX - sinPoleY * cosRegY * sinRotX - sinxmxc * sinRegY * cosRotX;
-	double PC = sinPoleY * sinxmxc / cosRotY;
-	double PD = (sinPoleY * cosxmxc * sinRegY + cosPoleY * cosRegY) / cosRotY;
-
-	return make_tuple(PA, PB, PC, PD);
-}
-
-point util::UVToGeographical(double longitude, const point& stereoUV)
-{
-	double U, V;
-
-	if (stereoUV.X() == 0 && stereoUV.Y() == 0)
-	{
-		return point(0, 0);
-	}
-
-	double sinLon, cosLon;
-
-	sincos(longitude * constants::kDeg, &sinLon, &cosLon);
-
-	U = stereoUV.X() * cosLon + stereoUV.Y() * sinLon;
-	V = -stereoUV.X() * sinLon + stereoUV.Y() * cosLon;
-
-	return point(U, V);
 }
 
 double util::ToPower(double value, double power)
@@ -958,7 +855,9 @@ void util::Unpack(vector<shared_ptr<info<T>>> infos, bool addToCache)
 
 		ASSERT(arr);
 
-		packing::Unpack<T>(dynamic_pointer_cast<simple_packed>(pdata).get(), arr, &stream);
+		const auto pck = std::dynamic_pointer_cast<simple_packed>(pdata);
+		NFmiGribPacking::simple_packing::Unpack<T>(arr, pck->data, pck->bitmap, pck->unpackedLength, pck->packedLength,
+		                                           pck->coefficients, stream);
 
 		CUDA_CHECK(cudaHostUnregister(arr));
 		CUDA_CHECK(cudaStreamSynchronize(stream));

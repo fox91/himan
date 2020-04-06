@@ -63,6 +63,22 @@ function produceProbabilities(sourceparam, targetparam, op, limit)
     prob[i] = tmp / (#datas)
   end
 
+  proctype = nil
+
+  if op == ">" then
+    proctype = processing_type(HPProcessingType.kProbabilityGreaterThan, limit, kHPMissingValue)
+  elseif op == "==" then
+    proctype = processing_type(HPProcessingType.kProbabilityEq, limit, kHPMissingValue)
+  end
+
+  targetparam:SetProcessingType(proctype)
+
+  if sourceparam:GetName() == "FFG-MS" then
+    targetparam:SetAggregation(aggregation(HPAggregationType.kMaximum, configuration:GetForecastStep()))
+  elseif sourceparam:GetName() == "RRR-KGM2" then
+    targetparam:SetAggregation(aggregation(HPAggregationType.kAccumulation, configuration:GetForecastStep()))
+  end
+
   result:SetParam(targetparam)
   result:SetValues(prob)
 

@@ -25,6 +25,7 @@
 
 #include "NFmiRadonDB.h"
 #include "auxiliary_plugin.h"
+#include "file_information.h"
 #include "info.h"
 #include "search_options.h"
 
@@ -62,7 +63,7 @@ class radon : public auxiliary_plugin
 	 * @brief Return filename of a field
 	 */
 
-	std::pair<std::vector<std::string>, std::string> Files(search_options& options);
+	std::vector<file_information> Files(search_options& options);
 
 	/**
 	 * @brief Return previ data in CSV format
@@ -75,9 +76,9 @@ class radon : public auxiliary_plugin
 	 */
 
 	template <typename T>
-	bool Save(const info<T>& resultInfo, const std::string& theFileName, const std::string& targetGeomName);
+	bool Save(const info<T>& resultInfo, const file_information& finfo, const std::string& targetGeomName);
 
-	bool Save(const info<double>& resultInfo, const std::string& theFileName, const std::string& targetGeomName);
+	bool Save(const info<double>& resultInfo, const file_information& finfo, const std::string& targetGeomName);
 
 	/**
 	 * @brief Function to expose the NFmiRadonDB interface
@@ -99,7 +100,7 @@ class radon : public auxiliary_plugin
 
 	void Init();
 	template <typename T>
-	bool SaveGrid(const info<T>& resultInfo, const std::string& theFileName, const std::string& targetGeomName);
+	bool SaveGrid(const info<T>& resultInfo, const file_information& theFileName, const std::string& targetGeomName);
 
 	template <typename T>
 	bool SavePrevi(const info<T>& resultInfo);
@@ -120,7 +121,7 @@ inline NFmiRadonDB& radon::RadonDB()
 
 extern "C" std::shared_ptr<himan_plugin> create()
 {
-	return std::shared_ptr<radon>(new radon());
+	return std::make_shared<radon>();
 }
 #endif /* HIMAN_AUXILIARY_INCLUDE */
 

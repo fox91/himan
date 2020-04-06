@@ -7,6 +7,7 @@
 #define WRITER_H
 
 #include "auxiliary_plugin.h"
+#include "file_information.h"
 #include "info.h"
 #include "plugin_configuration.h"
 #include "write_options.h"
@@ -33,17 +34,15 @@ class writer : public auxiliary_plugin
 		return kAuxiliary;
 	}
 	template <typename T>
-	bool ToFile(std::shared_ptr<info<T>> theInfo, std::shared_ptr<const plugin_configuration> conf,
-	            const std::string& theFileName = "");
-	bool ToFile(std::shared_ptr<info<double>> theInfo, std::shared_ptr<const plugin_configuration> conf,
-	            const std::string& theFileName = "");
+	bool ToFile(std::shared_ptr<info<T>> theInfo, std::shared_ptr<const plugin_configuration> conf);
+	bool ToFile(std::shared_ptr<info<double>> theInfo, std::shared_ptr<const plugin_configuration> conf);
 
 	write_options WriteOptions() const;
 	void WriteOptions(const write_options& theWriteOptions);
 
    private:
 	template <typename T>
-	bool CreateFile(info<T>& theInfo, std::shared_ptr<const plugin_configuration> conf, std::string& theOutputFile);
+	file_information CreateFile(info<T>& theInfo, std::shared_ptr<const plugin_configuration> conf);
 
 	write_options itsWriteOptions;
 };

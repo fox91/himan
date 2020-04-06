@@ -233,7 +233,7 @@ void ExecutePlugin(const shared_ptr<plugin_configuration>& pc, vector<plugin_tim
 		pluginTimes.push_back(t);
 	}
 
-	if (pc->DatabaseType() == kRadon && pc->FileWriteOption() == kDatabase && pc->UpdateSSStateTable())
+	if (pc->DatabaseType() == kRadon && pc->WriteToDatabase() && pc->UpdateSSStateTable())
 	{
 		UpdateSSState(pc);
 	}
@@ -375,7 +375,7 @@ int main(int argc, char** argv)
 		cout << "-------------------------------------------" << endl;
 		cout << setw(25) << left << "Total duration:" << setw(8) << right << totalTime << " ms" << endl;
 
-		if (conf->DatabaseType() == kRadon && conf->FileWriteOption() == kDatabase)
+		if (conf->DatabaseType() == kRadon && conf->WriteToDatabase())
 		{
 			UploadRunStatisticsToDatabase(conf, pluginTimes);
 		}
@@ -505,15 +505,12 @@ shared_ptr<configuration> ParseCommandLine(int argc, char** argv)
 		("list-plugins,l", "list all defined plugins")
 		("debug-level,d", po::value(&logLevel), "set log level: 0(fatal) 1(error) 2(warning) 3(info) 4(debug) 5(trace)")
 		("statistics,s", po::value(&statisticsLabel)->implicit_value("Himan"), "record statistics information")
-		("radon,R", "use only radon database (deprecated)")
-		("neons,N", "use only neons database (deprecated)")
 #ifdef HAVE_CUDA
 		("cuda-device-id", po::value(&cudaDeviceId), "use a specific cuda device (default: 0)")
 		("cuda-properties", "print cuda device properties of platform (if any)")
 		("no-cuda", "disable all cuda extensions")
 		("no-cuda-packing", "disable cuda packing of grib data")
 		("no-cuda-unpacking", "disable cuda unpacking of grib data")
-		("no-cuda-interpolation", "disable cuda grid interpolation")
 #endif
 		("no-database", "disable database access")
 		("param-file", po::value(&paramFile), "parameter definition file for no-database mode (syntax: shortName,paramName)")
@@ -582,7 +579,6 @@ shared_ptr<configuration> ParseCommandLine(int argc, char** argv)
 	conf->UseCuda(false);
 	conf->UseCudaForPacking(false);
 	conf->UseCudaForUnpacking(false);
-	conf->UseCudaForInterpolation(false);
 	conf->CudaDeviceCount(0);
 #else
 	if (opt.count("cuda-properties"))
@@ -601,17 +597,11 @@ shared_ptr<configuration> ParseCommandLine(int argc, char** argv)
 		conf->UseCudaForUnpacking(false);
 	}
 
-	if (opt.count("no-cuda-interpolation"))
-	{
-		conf->UseCudaForInterpolation(false);
-	}
-
 	if (opt.count("no-cuda"))
 	{
 		conf->UseCuda(false);
 		conf->UseCudaForPacking(false);
 		conf->UseCudaForUnpacking(false);
-		conf->UseCudaForInterpolation(false);
 	}
 
 	if (opt.count("no-ss_state-update"))
@@ -639,7 +629,6 @@ shared_ptr<configuration> ParseCommandLine(int argc, char** argv)
 		conf->UseCuda(false);
 		conf->UseCudaForPacking(false);
 		conf->UseCudaForUnpacking(false);
-		conf->UseCudaForInterpolation(false);
 	}
 
 	conf->CudaDeviceCount(devCount);
@@ -745,15 +734,7 @@ shared_ptr<configuration> ParseCommandLine(int argc, char** argv)
 		exit(1);
 	}
 
-	if (opt.count("radon"))
-	{
-		cerr << "Option -R is deprecated" << endl;
-	}
-	else if (opt.count("neons"))
-	{
-		cerr << "Option -N is deprecated" << endl;
-	}
-	else if (opt.count("no-database"))
+	if (opt.count("no-database"))
 	{
 		conf->DatabaseType(kNoDatabase);
 		if (opt.count("param-file") == 0)

@@ -3,8 +3,8 @@
 %define LIBNAME himan-plugins
 Summary: himan-plugins library
 Name: %{LIBNAME}
-Version: 19.5.15
-Release: 1.el7.fmi
+Version: 19.11.14
+Release: 1%{dist}.fmi
 License: MIT
 Group: Development/Tools
 URL: http://www.fmi.fi
@@ -13,15 +13,16 @@ BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-buildroot-%(%{__id_u} -n)
 Requires: glibc
 Requires: libgcc
 Requires: libstdc++
-Requires: himan-lib >= 19.5.6
+Requires: himan-lib >= 19.10.25
 Requires: lua >= 5.1.4
 Requires: unixODBC
-Requires: libfmigrib >= 19.2.12
+Requires: libfmigrib >= 19.10.28
 Requires: libfmidb >= 19.2.12
 Requires: smartmet-library-newbase >= 18.7.23
 Requires: libpqxx
 Requires: boost-iostreams
 Requires: boost-thread
+Requires: libs3
 
 %if %{defined suse_version}
 Requires: libjasper
@@ -34,16 +35,19 @@ BuildRequires: eccodes-devel
 BuildRequires: redhat-rpm-config
 BuildRequires: cuda-cusp-9-1 >= 0.5.1
 BuildRequires: eigen >= 3.3.4
+BuildRequires: libs3-devel
 
 Requires: jasper-libs
 Requires: eccodes
 %endif
-BuildRequires: libfmigrib-devel >= 19.2.12
-#BuildRequires: smartmet-library-newbase-devel >= 18.7.23
+BuildRequires: libfmigrib-devel >= 19.10.28
+BuildRequires: smartmet-library-newbase-devel >= 18.7.23
 BuildRequires: scons
 BuildRequires: libluabind >= 0.9.3-3
 BuildRequires: boost-devel
 BuildRequires: scons
+
+AutoReqProv:	no
 
 %description
 Himan -- hilojen manipulaatio -- plugin collection
@@ -115,6 +119,58 @@ rm -rf $RPM_BUILD_ROOT
 %{_libdir}/himan-plugins/libwriter.so
 
 %changelog
+* Thu Nov 14 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.11.14-1.fmi
+- Add s3 read support
+* Mon Nov 11 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.11.11-1.fmi
+- radon columns file_format_id&file_protocol_id in use
+* Thu Nov  7 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.11.7-1.fmi
+- boost::thread replaced with std::thread
+* Wed Oct 30 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.10.30-1.fmi
+- Use unpacking functions from fmigrib
+* Mon Oct 28 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.10.28-1.fmi
+- correct data type for byte offset and length
+* Fri Oct 25 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.10.25-1.fmi
+- Fix for snow_drift
+- Support CMEPS style lagged ensembles
+* Thu Oct 17 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.10.17-1.fmi
+- grib2 write xOfEndOfOverallTimeInterval
+- radon columns byte_offset&byte_length in use
+* Mon Oct  7 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.10.7-1.fmi
+- New fmigrib ABI
+- Preliminary support for big gribs (many messages) in database
+- Minor bugfixes
+* Mon Sep 16 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.9.16-1.fmi
+- Add support for class processing_type
+* Mon Sep  2 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.9.2-1.fmi
+- pop tweaking
+* Thu Aug 29 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.8.29-1.fmi
+- blend fixes
+* Wed Aug 28 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.8.28-3.fmi
+- More minor transformer tweaking
+* Wed Aug 28 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.8.28-2.fmi
+- Minor transformer tweaking
+* Wed Aug 28 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.8.28-1.fmi
+- Minor blend tweaking
+* Tue Aug 27 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.8.27-2.fmi
+- Allow missing values for CSI when producing probabilities
+* Tue Aug 27 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.8.27-1.fmi
+- Adding support for vector rotation to projection north
+* Tue Jun 18 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.6.18-3.fmi
+- Bugfix for auto_taf
+* Tue Jun 18 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.6.18-2.fmi
+- windvector to single precision
+* Tue Jun 18 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.6.18-1.fmi
+- vvms to single precision
+* Mon Jun 17 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.6.17-1.fmi
+- cape/500m performance optimization
+* Thu Jun 13 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.6.13-2.fmi
+- Fix numerical_functions regression
+* Thu Jun 13 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.6.13-1.fmi
+- pot v2.6
+* Wed Jun 12 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.6.12-2.fmi
+- hybrid_height: fallback method for MNWC sub-hour
+* Wed Jun 12 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.6.12-1.fmi
+- numerical_functions tweaking
 * Wed May 15 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.5.15-1.fmi
 - Reduce2DGPU added
 * Mon May  6 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.5.6-2.fmi
@@ -129,7 +185,7 @@ rm -rf $RPM_BUILD_ROOT
 - Stability updates
 * Wed Apr 24 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.4.24-1.fmi
 - Added convective severity index
-* Mon Apr 11 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.4.11-1.fmi
+* Thu Apr 11 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.4.11-1.fmi
 - More cape tuning
 * Mon Apr  8 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.4.8-1.fmi
 - cape tuning

@@ -74,3 +74,15 @@ rotation: specify which parameters (if any) should be rotated from projection no
 time_interpolation: define if Himan should do time interpolation if data is not found for some leadtime (default: false). Himan will try to find neighboring data up to +/- 6 hours from current leadtime.
 
     "time_interpolation" : true
+
+change_missing_value_to: define if missing value should be changed to some normal floating point value (note: this is not the same as defining a different missing value: the resulting grib will have no missing values defined!)
+
+    "change_missing_value_to" : 0
+
+write_empty_grid: define if an empty grid (all values missing) should be written out or not. default: yes.
+
+    "write_empty_grid" : false
+
+precision: define the precision used writing output files, decimal places. default: use what is in database
+
+    "precision" : 2

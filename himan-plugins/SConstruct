@@ -41,11 +41,6 @@ libraries.append('nc4')
 
 env.Append(LIBS = libraries)
 
-cflags = []
-cflags.append('-fPIC')
-
-env.Append(CCFLAGS = cflags)
-
 # Linker flags
 
 env.Append(LINKFLAGS = ['-rdynamic'])

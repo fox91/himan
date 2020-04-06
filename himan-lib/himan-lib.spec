@@ -3,8 +3,8 @@
 %define LIBNAME himan-lib
 Summary: himan core library
 Name: %{LIBNAME}
-Version: 19.5.15
-Release: 2.el7.fmi
+Version: 19.11.14
+Release: 1%{dist}.fmi
 License: MIT
 Group: Development/Tools
 URL: http://www.fmi.fi
@@ -14,7 +14,7 @@ Requires: glibc
 Requires: libgcc
 Requires: libstdc++
 Requires: libfmidb >= 17.9.18
-Requires: libfmigrib >= 18.2.12
+Requires: libfmigrib >= 19.10.28
 
 %if %{defined suse_version}
 BuildRequires: bzip2
@@ -29,15 +29,19 @@ Requires: gdal
 Requires: eccodes
 Requires: boost-iostreams
 Requires: boost-filesystem
+Requires: libs3
 
 %endif
 BuildRequires: libfmidb-devel >= 17.9.18
-BuildRequires: libfmigrib-devel >= 18.2.12
+BuildRequires: libfmigrib-devel >= 19.10.28
 BuildRequires: zlib-devel
 BuildRequires: boost-devel
 BuildRequires: scons
+BuildRequires: libs3-devel
 
 Provides: libhiman.so
+
+AutoReqProv:	no
 
 %description
 Himan -- hilojen manipulaatio -- core library
@@ -62,6 +66,30 @@ rm -rf $RPM_BUILD_ROOT
 %{_libdir}/libhiman.so
 
 %changelog
+* Thu Nov 14 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.11.14-1.fmi
+- Add s3 read support
+* Thu Nov  7 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.11.7-2.fmi
+- Fix out-of-bounds write in cuda vector component rotation
+* Thu Nov  7 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.11.7-1.fmi
+- Bugfix for configuration parsing
+* Wed Oct 30 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.10.30-1.fmi
+- Use unpacking functions from fmigrib
+* Fri Oct 25 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.10.25-1.fmi
+- Support CMEPS-style lagged ensembles
+* Mon Oct  7 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.10.7-1.fmi
+- Add time offset for aggregations
+* Mon Sep 16 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.9.16-1.fmi
+- Add class processing_type
+* Mon Sep  2 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.9.2-1.fmi
+- Remove AB from grid
+* Tue Aug 27 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.8.27-1.fmi
+- Adding support for vector rotation to projection north
+* Tue Jun 18 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.6.18-1.fmi
+- Bugix to rotation
+* Thu Jun 13 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.6.13-1.fmi
+- numerical_functions additions
+* Wed Jun 12 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.6.12-1.fmi
+- numerical_functions tweaking
 * Wed May 15 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.5.15-2.fmi
 - Reduce2DGPU additions
 * Wed May 15 2019 Mikko Partio <mikko.partio@fmi.fi> - 19.5.15-1.fmi

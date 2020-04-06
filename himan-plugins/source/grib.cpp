@@ -1,5 +1,6 @@
 #include "grib.h"
 #include "NFmiGrib.h"
+#include "file_accessor.h"
 #include "grid.h"
 #include "lambert_conformal_grid.h"
 #include "latitude_longitude_grid.h"
@@ -27,6 +28,106 @@ using namespace himan::plugin;
 std::string GetParamNameFromGribShortName(const std::string& paramFileName, const std::string& shortName);
 
 const double gribMissing = 32700.;
+
+long DetermineProductDefinitionTemplateNumber(long agg, long proc, long ftype)
+{
+	// Determine which code table to use to represent our data
+	// We have four options:
+	//
+	//  aggregation | processing
+	//  ------------+-----------
+	//       0      |     0
+	//       0      |     1
+	//       1      |     0
+	//       1      |     1
+
+	using namespace himan;
+
+	long templateNumber = 0;  // default: No aggregation, no processing
+
+	if (agg == kUnknownAggregationType && proc == kUnknownProcessingType)
+	{
+		// Case 1: No aggregation, no processing, for example T-K
+
+		templateNumber = 0;  // Analysis or forecast at a horizontal level or in a horizontal layer at a point in time
+
+		if (ftype == kEpsPerturbation || ftype == kEpsControl)
+		{
+			templateNumber = 1;  // Individual ensemble forecast, control and perturbed, at a horizontal level or in
+			                     // a horizontal layer at a point in time
+		}
+	}
+	else if (agg == kUnknownAggregationType && proc != kUnknownProcessingType)
+	{
+		// Case 2: not aggregated, but processed, for example F50-T-K
+
+		switch (proc)
+		{
+			default:
+				templateNumber = 2;  // Derived forecasts based on all ensemble members at a horizontal level or in a
+				                     // horizontal layer at a point in time.
+				break;
+			case kProbabilityGreaterThan:
+			case kProbabilityLessThan:
+			case kProbabilityBetween:
+			case kProbabilityEquals:
+			case kProbabilityNotEquals:
+			case kProbabilityEqualsIn:
+				// probabilities
+				templateNumber =
+				    5;  // Probability forecasts at a horizontal level or in a horizontal layer at a point in time
+				break;
+
+			case kFractile:
+				templateNumber =
+				    6;  //  Percentile forecasts at a horizontal level or in a horizontal layer at a point in time
+				break;
+		}
+	}
+	else if (agg != kUnknownAggregationType && proc == kUnknownProcessingType)
+	{
+		// Case 3: aggregated, but not processed, for example RR-1-H
+
+		templateNumber = 8;  // Average, accumulation, extreme values or other statistically processed values
+		                     // at a horizontal level or in a horizontal layer in a continuous or
+		                     // non-continuous time interval
+
+		if (ftype == kEpsPerturbation || ftype == kEpsControl)
+		{
+			templateNumber = 11;  // Individual ensemble forecast, control and perturbed, at a horizontal level or
+			                      // in a horizontal layer, in a continuous or non-continuous time interval.
+		}
+	}
+	else if (agg != kUnknownAggregationType && proc != kUnknownProcessingType)
+	{
+		// Case 4: aggregated and processed, for example PROB-RR-1
+
+		switch (proc)
+		{
+			default:
+				templateNumber =
+				    4;  // Derived forecasts based on a cluster of ensemble members over a circular area at a
+				        // horizontal level or in a horizontal layer at a point in time.
+				break;
+			case kProbabilityGreaterThan:
+			case kProbabilityLessThan:
+			case kProbabilityBetween:
+			case kProbabilityEquals:
+			case kProbabilityNotEquals:
+			case kProbabilityEqualsIn:
+				// probabilities
+				templateNumber = 9;  //  Probability forecasts at a horizontal level or in a horizontal layer in a
+				                     //  continuous or non-continuous time interval
+				break;
+			case kFractile:
+				templateNumber = 10;  // Percentile forecasts at a horizontal level or in a horizontal layer in a
+				                      // continuous or non-continuous time interval
+				break;
+		}
+	}
+
+	return templateNumber;
+}
 
 template <typename T>
 long DetermineBitsPerValue(const vector<T>& values, double precision)
@@ -526,12 +627,8 @@ void grib::WriteTime(const forecast_time& ftime, const producer& prod, const par
 
 		if (ftime.Step().Minutes() % 60 != 0)
 		{
-			if (ftime.Step().Minutes() % 15 != 0)
-			{
-				throw runtime_error("Minutes value not divisible with 15");
-			}
-			itsGrib->Message().UnitOfTimeRange(13);  // 15 minutes
-			stepUnit = FIFTEEN_MINUTES;
+			itsLogger.Fatal("Sub-hour output ony in grib2");
+			himan::Abort();
 		}
 		else if (ftime.Step().Hours() > 255)  // Forecast with stepvalues that don't fit in one byte
 		{
@@ -559,18 +656,9 @@ void grib::WriteTime(const forecast_time& ftime, const producer& prod, const par
 			}
 		}
 
-		long p1, p2;
-
-		if (stepUnit == FIFTEEN_MINUTES)
-		{
-			p1 = ((ftime.Step() - par.Aggregation().TimeDuration()) / 15).Minutes();
-			p2 = (ftime.Step() / 15).Minutes();
-		}
-		else
-		{
-			p1 = ((ftime.Step() - par.Aggregation().TimeDuration()) / static_cast<int>(stepUnit.Hours())).Hours();
-			p2 = (ftime.Step() / static_cast<int>(stepUnit.Hours())).Hours();
-		}
+		// These are used if parameter is aggregated
+		long p1 = ((ftime.Step() + par.Aggregation().TimeOffset()) / static_cast<int>(stepUnit.Hours())).Hours();
+		long p2 = p1 + par.Aggregation().TimeDuration().Hours() / static_cast<int>(stepUnit.Hours());
 
 		switch (par.Aggregation().Type())
 		{
@@ -578,7 +666,7 @@ void grib::WriteTime(const forecast_time& ftime, const producer& prod, const par
 			case kUnknownAggregationType:
 				// Forecast product valid for reference time + P1 (P1 > 0)
 				itsGrib->Message().TimeRangeIndicator(0);
-				itsGrib->Message().P1(p2);  // yes 'p2' is correct here!
+				itsGrib->Message().P1((ftime.Step() / static_cast<int>(stepUnit.Hours())).Hours());
 				break;
 			case kAverage:
 				// Average (reference time + P1 to reference time + P2)
@@ -627,6 +715,8 @@ void grib::WriteTime(const forecast_time& ftime, const producer& prod, const par
 	}
 	else
 	{
+		const long templateNumber = itsGrib->Message().ProductDefinitionTemplateNumber();
+
 		// leadtime for this prognosis
 		long unitOfTimeRange = 1;  // hours
 		long stepValue = ftime.Step().Hours();
@@ -653,6 +743,7 @@ void grib::WriteTime(const forecast_time& ftime, const producer& prod, const par
 				// duration of the aggregation period
 				long unitForTimeRange = 1;  // hours
 				long lengthOfTimeRange = par.Aggregation().TimeDuration().Hours();
+				long timeOffset = par.Aggregation().TimeOffset().Hours();
 
 				if (par.Aggregation().TimeDuration().Minutes() % 60 != 0)
 				{
@@ -662,20 +753,35 @@ void grib::WriteTime(const forecast_time& ftime, const producer& prod, const par
 
 				if (unitOfTimeRange == unitForTimeRange)
 				{
-					stepValue -= lengthOfTimeRange;
+					stepValue += timeOffset;
 				}
 				else if (unitOfTimeRange == 1 && unitForTimeRange == 0)
 				{
-					stepValue -= lengthOfTimeRange / 60;
+					stepValue += timeOffset / 60;
 				}
 				else if (unitOfTimeRange == 0 && unitForTimeRange == 1)
 				{
-					stepValue -= lengthOfTimeRange * 60;
+					stepValue += timeOffset * 60;
 				}
 
 				itsGrib->Message().SetLongKey("indicatorOfUnitForTimeRange", unitForTimeRange);
 				itsGrib->Message().ForecastTime(stepValue);  // start step
 				itsGrib->Message().LengthOfTimeRange(lengthOfTimeRange);
+
+				// for productDefinitionTemplateNumber 9,10,11,12,13,14,34,43,47,61,73,73
+				// grib2 has extra keys for "end of overall time interval"
+				if (templateNumber >= 9 && templateNumber <= 14)
+				{
+					raw_time endOfInterval = raw_time(ftime.ValidDateTime());
+					endOfInterval += par.Aggregation().TimeOffset() + par.Aggregation().TimeDuration();
+
+					itsGrib->Message().SetLongKey("yearOfEndOfOverallTimeInterval", stol(endOfInterval.String("%Y")));
+					itsGrib->Message().SetLongKey("monthOfEndOfOverallTimeInterval", stol(endOfInterval.String("%m")));
+					itsGrib->Message().SetLongKey("dayOfEndOfOverallTimeInterval", stol(endOfInterval.String("%d")));
+					itsGrib->Message().SetLongKey("hourOfEndOfOverallTimeInterval", stol(endOfInterval.String("%H")));
+					itsGrib->Message().SetLongKey("minuteOfEndOfOverallTimeInterval", stol(endOfInterval.String("%M")));
+					itsGrib->Message().SetLongKey("secondOfEndOfOverallTimeInterval", 0);
+				}
 				break;
 		}
 	}
@@ -715,40 +821,91 @@ void grib::WriteParameter(const param& par, const producer& prod, const forecast
 			itsGrib->Message().ParameterDiscipline(par.GribDiscipline());
 		}
 
-		if (par.Aggregation().Type() != kUnknownAggregationType)
+		const auto aggType = par.Aggregation().Type();
+		const auto procType = par.ProcessingType().Type();
+		const long templateNumber = DetermineProductDefinitionTemplateNumber(aggType, procType, ftype.Type());
+
+		itsGrib->Message().ProductDefinitionTemplateNumber(templateNumber);
+
+		switch (aggType)
 		{
-			long templateNumber = 8;  // Average, accumulation, extreme values or other statistically processed values
-			                          // at a horizontal level or in a horizontal layer in a continuous or
-			                          // non-continuous time interval
+			case kAverage:
+				itsGrib->Message().TypeOfStatisticalProcessing(0);
+				break;
+			case kAccumulation:
+				itsGrib->Message().TypeOfStatisticalProcessing(1);
+				break;
+			case kMaximum:
+				itsGrib->Message().TypeOfStatisticalProcessing(2);
+				break;
+			case kMinimum:
+				itsGrib->Message().TypeOfStatisticalProcessing(3);
+				break;
+			default:
+			case kUnknownAggregationType:
+				break;
+		}
 
-			if (ftype.Type() == kEpsPerturbation || ftype.Type() == kEpsControl)
-			{
-				templateNumber = 11;  // Individual ensemble forecast, control and perturbed, at a horizontal level or
-				                      // in a horizontal layer, in a continuous or non-continuous time interval.
-			}
+		long num = static_cast<long>(par.ProcessingType().NumberOfEnsembleMembers());
 
-			itsGrib->Message().ProductDefinitionTemplateNumber(templateNumber);
+		if (num == static_cast<long>(kHPMissingInt))
+		{
+			num = 0;
+		}
 
-			long type;
-
-			switch (par.Aggregation().Type())
-			{
-				default:
-				case kAverage:
-					type = 0;
-					break;
-				case kAccumulation:
-					type = 1;
-					break;
-				case kMaximum:
-					type = 2;
-					break;
-				case kMinimum:
-					type = 3;
-					break;
-			}
-
-			itsGrib->Message().TypeOfStatisticalProcessing(type);
+		switch (procType)
+		{
+			default:
+				break;
+			case kProbabilityGreaterThan:  // Probability of event above upper limit
+				itsGrib->Message().SetLongKey("probabilityType", 1);
+				itsGrib->Message().SetLongKey("scaledValueOfUpperLimit",
+				                              static_cast<long>(par.ProcessingType().Value()));
+				break;
+			case kProbabilityLessThan:  // Probability of event below lower limit
+				itsGrib->Message().SetLongKey("probabilityType", 0);
+				itsGrib->Message().SetLongKey("scaledValueOfLowerLimit",
+				                              static_cast<long>(par.ProcessingType().Value()));
+				break;
+			case kProbabilityBetween:
+				itsGrib->Message().SetLongKey("probabilityType", 192);
+				itsGrib->Message().SetLongKey("scaledValueOfLowerLimit",
+				                              static_cast<long>(par.ProcessingType().Value()));
+				itsGrib->Message().SetLongKey("scaledValueOfUpperLimit",
+				                              static_cast<long>(par.ProcessingType().Value2()));
+				break;
+			case kProbabilityEquals:
+				itsGrib->Message().SetLongKey("probabilityType", 193);
+				itsGrib->Message().SetLongKey("scaledValueOfLowerLimit",
+				                              static_cast<long>(par.ProcessingType().Value()));
+				break;
+			case kProbabilityNotEquals:
+				itsGrib->Message().SetLongKey("probabilityType", 193);
+				itsGrib->Message().SetLongKey("scaledValueOfLowerLimit",
+				                              static_cast<long>(par.ProcessingType().Value()));
+				break;
+			case kProbabilityEqualsIn:
+				itsGrib->Message().SetLongKey("probabilityType", 194);
+				break;
+			case kFractile:
+				itsGrib->Message().SetLongKey("percentileValue", static_cast<long>(par.ProcessingType().Value()));
+				break;
+			case kEnsembleMean:
+				itsGrib->Message().SetLongKey("derivedForecast", 0);
+				itsGrib->Message().SetLongKey("numberOfForecastsInEnsemble", num);
+				break;
+			case kSpread:
+				itsGrib->Message().SetLongKey("derivedForecast", 4);
+				itsGrib->Message().SetLongKey("numberOfForecastsInEnsemble", num);
+				break;
+			case kStandardDeviation:
+				itsGrib->Message().SetLongKey("derivedForecast", 2);
+				itsGrib->Message().SetLongKey("numberOfForecastsInEnsemble", num);
+				break;
+			case kEFI:
+				itsGrib->Message().SetLongKey("derivedForecast", 199);
+				itsGrib->Message().SetLongKey("numberOfForecastsInEnsemble", num);
+				break;
 		}
 	}
 }
@@ -823,13 +980,13 @@ void WriteDataValues(const vector<float>& values, NFmiGribMessage& msg)
 	delete[] arr;
 }
 
-bool grib::ToFile(info<double>& anInfo, string& outputFile, bool appendToFile)
+himan::file_information grib::ToFile(info<double>& anInfo)
 {
-	return ToFile<double>(anInfo, outputFile, appendToFile);
+	return ToFile<double>(anInfo);
 }
 
 template <typename T>
-bool grib::ToFile(info<T>& anInfo, string& outputFile, bool appendToFile)
+himan::file_information grib::ToFile(info<T>& anInfo)
 {
 	// Write only that data which is currently set at descriptors
 
@@ -840,49 +997,84 @@ bool grib::ToFile(info<T>& anInfo, string& outputFile, bool appendToFile)
 	{
 		itsLogger.Error("Unable to write irregular grid of type " + HPGridTypeToString.at(anInfo.Grid()->Type()) +
 		                " to grib");
-		return false;
+		throw kInvalidWriteOptions;
 	}
 
-	if (!itsWriteOptions.write_empty_grid)
+	bool appendToFile = (itsWriteOptions.configuration->WriteMode() == kAllGridsToAFile ||
+	                     itsWriteOptions.configuration->WriteMode() == kFewGridsToAFile);
+
+	if (appendToFile && (itsWriteOptions.configuration->FileCompression() == kGZIP ||
+	                     itsWriteOptions.configuration->FileCompression() == kBZIP2))
 	{
-		if (anInfo.Data().MissingCount() == anInfo.Data().Size())
-		{
-			itsLogger.Debug("Not writing empty grid");
-			return true;
-		}
+		itsLogger.Warning("Unable to write multiple grids to a packed file");
+		appendToFile = false;
+	}
+
+	file_information finfo;
+	finfo.file_location = util::MakeFileName(anInfo, *itsWriteOptions.configuration) + ".grib";
+	finfo.file_type = kGRIB1;
+	finfo.storage_type = kLocalFileSystem;
+
+	if (itsWriteOptions.configuration->OutputFileType() == kGRIB2)
+	{
+		finfo.file_location += "2";
+		finfo.file_type = kGRIB2;
+	}
+
+	if (itsWriteOptions.configuration->FileCompression() == kGZIP)
+	{
+		finfo.file_location += ".gz";
+	}
+	else if (itsWriteOptions.configuration->FileCompression() == kBZIP2)
+	{
+		finfo.file_location += ".bz2";
+	}
+
+	namespace fs = boost::filesystem;
+
+	fs::path pathname(finfo.file_location);
+
+	if (!pathname.parent_path().empty() && !fs::is_directory(pathname.parent_path()))
+	{
+		fs::create_directories(pathname.parent_path());
 	}
 
 	long edition = static_cast<long>(itsWriteOptions.configuration->OutputFileType());
 
-	// Check levelvalue and forecast type since those might force us to change to grib2!
+	// Check levelvalue, forecast type and param processing type since those might force us to change to grib2!
 
 	HPForecastType forecastType = anInfo.ForecastType().Type();
 
 	if (edition == 1 &&
-	    (anInfo.Level().AB().size() > 255 || (forecastType == kEpsControl || forecastType == kEpsPerturbation)))
+	    (anInfo.Level().AB().size() > 255 || (forecastType == kEpsControl || forecastType == kEpsPerturbation) ||
+	     anInfo.Param().ProcessingType().Type() != kUnknownProcessingType || anInfo.Time().Step().Minutes() % 60 != 0))
 	{
 		itsLogger.Trace("File type forced to GRIB2 (level value: " + to_string(anInfo.Level().Value()) +
-		                ", forecast type: " + HPForecastTypeToString.at(forecastType) + ")");
+		                ", forecast type: " + HPForecastTypeToString.at(forecastType) +
+		                ", processing type: " + HPProcessingTypeToString.at(anInfo.Param().ProcessingType().Type()) +
+		                " step: " + static_cast<string>(anInfo.Time().Step()) + ")");
 		edition = 2;
+		finfo.file_type = kGRIB2;
+
 		if (itsWriteOptions.configuration->FileCompression() == kNoCompression &&
-		    itsWriteOptions.configuration->FileWriteOption() != kSingleFile)
+		    itsWriteOptions.configuration->WriteMode() != kAllGridsToAFile)
 		{
-			outputFile += "2";
+			finfo.file_location += "2";
 		}
 
 		if (itsWriteOptions.configuration->FileCompression() == kGZIP)
 		{
-			outputFile.insert(outputFile.end() - 3, '2');
+			finfo.file_location.insert(finfo.file_location.end() - 3, '2');
 		}
 		else if (itsWriteOptions.configuration->FileCompression() == kBZIP2)
 		{
-			outputFile.insert(outputFile.end() - 4, '2');
+			finfo.file_location.insert(finfo.file_location.end() - 4, '2');
 		}
 		else if (itsWriteOptions.configuration->FileCompression() != kNoCompression)
 		{
 			itsLogger.Error("Unable to write to compressed grib. Unknown file compression: " +
 			                HPFileCompressionToString.at(itsWriteOptions.configuration->FileCompression()));
-			return false;
+			throw kInvalidWriteOptions;
 		}
 	}
 
@@ -955,7 +1147,8 @@ bool grib::ToFile(info<T>& anInfo, string& outputFile, bool appendToFile)
 	 */
 
 	const auto paramName = anInfo.Param().Name();
-	const int precision = anInfo.Param().Precision();
+	const int precision =
+	    (itsWriteOptions.precision == kHPMissingInt) ? anInfo.Param().Precision() : itsWriteOptions.precision;
 
 	long bitsPerValue;
 
@@ -1057,31 +1250,72 @@ bool grib::ToFile(info<T>& anInfo, string& outputFile, bool appendToFile)
 		itsGrib->Message().PV(AB, AB.size());
 	}
 
-	if ((itsWriteOptions.configuration->FileCompression() == kGZIP ||
-	     itsWriteOptions.configuration->FileCompression() == kBZIP2) &&
-	    appendToFile)
+	// message length can only be received from eccodes since it includes
+	// all grib headers etc
+	finfo.length = itsGrib->Message().GetLongKey("totalLength");
+
+	if (itsWriteOptions.configuration->WriteMode() != kSingleGridToAFile)
 	{
-		itsLogger.Warning("Unable to append to a compressed file");
-		appendToFile = false;
+		// appending to a file is a serial operation -- two threads cannot
+		// append to a single file simultaneously. therefore offset is just
+		// the size of the file so far.
+
+		try
+		{
+			finfo.offset = boost::filesystem::file_size(finfo.file_location);
+		}
+		catch (const boost::filesystem::filesystem_error& e)
+		{
+			finfo.offset = 0;
+		}
+
+		// handling message number is a bit tricker. fmigrib library cannot really
+		// be used for tracking message no of written messages, because neither it
+		// nor eccodes has any visibility to any ossibly existing messages in a file
+		// that is appended to. therefore here we are tracking the message count per
+		// file, but this is assuming that when himan starts, the file appended to
+		// does not exist!
+
+		static std::map<std::string, unsigned long> messages;
+
+		try
+		{
+			messages.at(finfo.file_location) = messages.at(finfo.file_location) + 1;
+		}
+		catch (const out_of_range& e)
+		{
+			messages[finfo.file_location] = 0;
+		}
+
+		finfo.message_no = messages.at(finfo.file_location);
+	}
+	else
+	{
+		finfo.offset = 0;
+		finfo.message_no = 0;
 	}
 
-	itsGrib->Message().Write(outputFile, appendToFile);
+	itsGrib->Message().Write(finfo.file_location, appendToFile);
 
 	aTimer.Stop();
-	const double duration = static_cast<double>(aTimer.GetTime());
+	const float duration = static_cast<float>(aTimer.GetTime());
+	const float bytes = static_cast<float>(finfo.length.get());  // TODO: does not work correctly if file is packed
+	const float speed = (bytes / 1024.f / 1024.f) / (duration / 1000.f);
 
-	const double bytes = static_cast<double>(boost::filesystem::file_size(outputFile));
+	stringstream ss;
 
-	const int speed = static_cast<int>(floor((bytes / 1024. / 1024.) / (duration / 1000.)));
+	ss.precision((speed < 1) ? 1 : 0);
 
 	string verb = (appendToFile ? "Appended to " : "Wrote ");
-	itsLogger.Info(verb + "file '" + outputFile + "' (" + to_string(speed) + " MB/s)");
 
-	return true;
+	ss << verb << "file '" << finfo.file_location << "' (" << fixed << speed << " MB/s)";
+	itsLogger.Info(ss.str());
+
+	return finfo;
 }
 
-template bool grib::ToFile<double>(info<double>&, string&, bool);
-template bool grib::ToFile<float>(info<float>&, string&, bool);
+template himan::file_information grib::ToFile<double>(info<double>&);
+template himan::file_information grib::ToFile<float>(info<float>&);
 
 // ---------------------------------------------------------------------------
 
@@ -2102,25 +2336,18 @@ bool grib::CreateInfoFromGrib(const search_options& options, bool readPackedData
 
 template bool grib::CreateInfoFromGrib<double>(const search_options&, bool, bool, shared_ptr<info<double>>) const;
 
-vector<shared_ptr<himan::info<double>>> grib::FromFile(const string& theInputFile, const search_options& options,
-                                                       bool readPackedData, bool readIfNotMatching) const
+vector<shared_ptr<himan::info<double>>> grib::FromFile(const file_information& theInputFile,
+                                                       const search_options& options, bool readPackedData,
+                                                       bool readIfNotMatching) const
 {
 	return FromFile<double>(theInputFile, options, readPackedData, readIfNotMatching);
 }
 
 template <typename T>
-vector<shared_ptr<himan::info<T>>> grib::FromFile(const string& theInputFile, const search_options& options,
+vector<shared_ptr<himan::info<T>>> grib::FromFile(const file_information& theInputFile, const search_options& options,
                                                   bool readPackedData, bool readIfNotMatching) const
 {
 	vector<shared_ptr<himan::info<T>>> infos;
-
-	if (!itsGrib->Open(theInputFile))
-	{
-		itsLogger.Error("Opening file '" + theInputFile + "' failed");
-		return infos;
-	}
-
-	int foundMessageNo = 0;
 
 	if (options.prod.Centre() == kHPMissingInt && options.configuration->DatabaseType() != kNoDatabase)
 	{
@@ -2129,111 +2356,75 @@ vector<shared_ptr<himan::info<T>>> grib::FromFile(const string& theInputFile, co
 		return infos;
 	}
 
-	timer aTimer;
-	aTimer.Start();
+	timer aTimer(true);
 
-	while (itsGrib->NextMessage())
+	if (readIfNotMatching || !theInputFile.offset)
 	{
-		foundMessageNo++;
+		// read all messages from local 'auxiliary' file
+		if (!itsGrib->Open(theInputFile.file_location))
+		{
+			itsLogger.Error("Opening file '" + theInputFile.file_location + "' failed");
+			return infos;
+		}
+
+		while (itsGrib->NextMessage())
+		{
+			auto newInfo = make_shared<info<T>>();
+			if (CreateInfoFromGrib(options, readPackedData, readIfNotMatching, newInfo) || readIfNotMatching)
+			{
+				infos.push_back(newInfo);
+				newInfo->First();
+			}
+		}
+	}
+	else
+	{
+		file_accessor fa;
+		const buffer buf = fa.Read(theInputFile);
+
+		if (!itsGrib->ReadMessage(buf.data, buf.length))
+		{
+			itsLogger.Error("Creating GRIB message from memory failed");
+			return infos;
+		}
+
 		auto newInfo = make_shared<info<T>>();
 
-		if (CreateInfoFromGrib(options, readPackedData, readIfNotMatching, newInfo) || readIfNotMatching)
+		if (CreateInfoFromGrib(options, readPackedData, false, newInfo))
 		{
 			infos.push_back(newInfo);
 			newInfo->First();
-
-			aTimer.Stop();
-
-			if (!readIfNotMatching)
-				break;  // We found what we were looking for
 		}
-	}
-
-	const long duration = aTimer.GetTime();
-	const long bytes = boost::filesystem::file_size(theInputFile);
-
-	const int speed =
-	    static_cast<int>(floor((static_cast<double>(bytes) / 1024. / 1024.) / (static_cast<double>(duration) / 1000.)));
-
-	itsLogger.Debug("Read file '" + theInputFile + "' (" + to_string(speed) + " MB/s)");
-
-	return infos;
-}
-
-template vector<shared_ptr<himan::info<double>>> grib::FromFile<double>(const string&, const search_options&, bool,
-                                                                        bool) const;
-template vector<shared_ptr<himan::info<float>>> grib::FromFile<float>(const string&, const search_options&, bool,
-                                                                      bool) const;
-
-vector<shared_ptr<himan::info<double>>> grib::FromIndexFile(const string& theInputFile, const search_options& options,
-                                                            bool readPackedData, bool readIfNotMatching) const
-{
-	return FromIndexFile<double>(theInputFile, options, readPackedData, readIfNotMatching);
-}
-
-template <typename T>
-vector<shared_ptr<himan::info<T>>> grib::FromIndexFile(const string& theInputFile, const search_options& options,
-                                                       bool readPackedData, bool readIfNotMatching) const
-{
-	vector<shared_ptr<himan::info<T>>> infos;
-
-	if (!itsGrib->Open(theInputFile))
-	{
-		itsLogger.Error("Opening file '" + theInputFile + "' failed");
-		return infos;
-	}
-
-	if (options.prod.Centre() == kHPMissingInt)
-	{
-		itsLogger.Error("Process and centre information for producer " + to_string(options.prod.Id()) +
-		                " are undefined");
-		return infos;
-	}
-
-	timer aTimer;
-	aTimer.Start();
-
-	// TODO need to check what happens when multiple idx files or idx + grib files are provided as input.
-
-	// Create map for index keys, ie. those keys that are common to both grib editions
-	map<string, long> indexKeys;
-	indexKeys["level"] = static_cast<long>(options.level.Value());
-	indexKeys["step"] = static_cast<long>(options.time.Step().Hours());
-	indexKeys["centre"] = static_cast<long>(options.prod.Centre());
-	indexKeys["generatingProcessIdentifier"] = static_cast<long>(options.prod.Process());
-	indexKeys["date"] = stol(options.time.OriginDateTime().String("%Y%m%d"));
-	indexKeys["time"] = stol(options.time.OriginDateTime().String("%H%M"));
-
-	auto newInfo = make_shared<info<T>>();
-
-	if ((itsGrib->Message(indexKeys, OptionsToKeys(options, 1)) ||
-	     itsGrib->Message(indexKeys, OptionsToKeys(options, 2))) &&
-	    CreateInfoFromGrib(options, readPackedData, readIfNotMatching, newInfo))
-	{
-		infos.push_back(newInfo);
-		newInfo->First();
 	}
 
 	aTimer.Stop();
 
-	long duration = aTimer.GetTime();
+	const long duration = aTimer.GetTime();
+	const auto bytes =
+	    (theInputFile.length) ? theInputFile.length.get() : boost::filesystem::file_size(theInputFile.file_location);
+	const float speed = (static_cast<float>(bytes) / 1024.f / 1024.f) / (static_cast<float>(duration) / 1000.f);
 
-	if (infos.size())
+	stringstream ss;
+	ss.precision((speed < 1.) ? 1 : 0);
+
+	ss << "Read from file '" << theInputFile.file_location << "' ";
+
+	if (theInputFile.offset)
 	{
-		itsLogger.Debug("Read " + infos[0]->Param().Name() + " from " + static_cast<string>(infos[0]->Level()) +
-		                " at " + infos[0]->Time().OriginDateTime().String() + " step " +
-		                static_cast<string>(infos[0]->Time().Step()) + " using grib index file '" + theInputFile +
-		                "' in " + to_string(duration) + " ms");
+		ss << "position " << theInputFile.offset.get() << ":" << bytes;
 	}
+
+	ss << " (" << fixed << speed << " MB/s)";
+
+	itsLogger.Debug(ss.str());
 
 	return infos;
 }
 
-template vector<shared_ptr<himan::info<double>>> grib::FromIndexFile<double>(const string&, const search_options&, bool,
-                                                                             bool) const;
-template vector<shared_ptr<himan::info<float>>> grib::FromIndexFile<float>(const string&, const search_options&, bool,
-                                                                           bool) const;
-
+template vector<shared_ptr<himan::info<double>>> grib::FromFile<double>(const file_information&, const search_options&,
+                                                                        bool, bool) const;
+template vector<shared_ptr<himan::info<float>>> grib::FromFile<float>(const file_information&, const search_options&,
+                                                                      bool, bool) const;
 void grib::UnpackBitmap(const unsigned char* __restrict__ bitmap, int* __restrict__ unpacked, size_t len,
                         size_t unpackedLen) const
 {
@@ -2263,46 +2454,6 @@ void grib::UnpackBitmap(const unsigned char* __restrict__ bitmap, int* __restric
 			}
 		}
 	}
-}
-
-std::map<string, long> grib::OptionsToKeys(const search_options& options, long edition) const
-{
-	// indicator of Parameter is not necessarily provided in search_options param
-	// look this information up from database instead
-
-	map<string, string> param;
-
-	if (options.configuration->DatabaseType() == kRadon)
-	{
-		auto r = GET_PLUGIN(radon);
-		auto levelInfo =
-		    r->RadonDB().GetLevelFromDatabaseName(boost::to_upper_copy(HPLevelTypeToString.at(options.level.Type())));
-
-		ASSERT(levelInfo.size());
-		param = r->RadonDB().GetParameterFromDatabaseName(options.prod.Id(), options.param.Name(),
-		                                                  stoi(levelInfo["id"]), options.level.Value());
-	}
-
-	std::map<string, long> ret;
-
-	if (edition == 1)
-	{
-		ret["table2Version"] = stol(param["grib1_table_version"]);
-		ret["indicatorOfTypeOfLevel"] = static_cast<long>(options.level.Type());
-		ret["indicatorOfParameter"] = stol(param["grib1_number"]);
-		ret["timeRangeIndicator"] = stol(param["grib1_timerange_indicator"]);
-	}
-	else if (edition == 2)
-	{
-		ret["typeOfFirstFixedSurface"] =
-		    static_cast<long>(itsGrib->Message().LevelTypeToAnotherEdition(options.level.Type(), 2));
-		ret["discipline"] = stol(param["grib2_discipline"]);
-		ret["parameterCategory"] = stol(param["grib2_category"]);
-		ret["parameterNumber"] = stol(param["grib2_number"]);
-		ret["typeOfStatisticalProcessing"] = stol(param["grib2_type_of_statistical_processing"]);
-	}
-
-	return ret;
 }
 
 std::string GetParamNameFromGribShortName(const std::string& paramFileName, const std::string& shortName)

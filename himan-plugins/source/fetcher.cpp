@@ -5,7 +5,6 @@
 #include "statistics.h"
 #include "util.h"
 #include <boost/filesystem/operations.hpp>
-#include <boost/thread/locks.hpp>
 #include <boost/thread/shared_mutex.hpp>
 #include <fstream>
 #include <future>
@@ -280,8 +279,7 @@ shared_ptr<info<T>> fetcher::FetchFromProducerSingle(search_options& opts, bool 
 
 	if (itsDoInterpolation)
 	{
-		if (!interpolate::Interpolate(opts.configuration->BaseGrid(), theInfos,
-		                              opts.configuration->UseCudaForInterpolation()))
+		if (!interpolate::Interpolate(opts.configuration->BaseGrid(), theInfos))
 		{
 			// interpolation failed
 			throw kFileDataNotFound;
@@ -365,24 +363,23 @@ template shared_ptr<info<double>> fetcher::FetchFromProducer<double>(search_opti
 template shared_ptr<info<float>> fetcher::FetchFromProducer<float>(search_options&, bool, bool);
 
 template <typename T>
-vector<shared_ptr<info<T>>> fetcher::FromFile(const vector<string>& files, search_options& options, bool readPackedData,
-                                              bool readIfNotMatching)
+vector<shared_ptr<info<T>>> fetcher::FromFile(const vector<file_information>& files, search_options& options,
+                                              bool readPackedData, bool readIfNotMatching)
 {
 	vector<shared_ptr<info<T>>> allInfos;
 
-	set<string> fileset(files.begin(), files.end());
-
-	for (const string& inputFile : fileset)
+	for (const auto& inputFile : files)
 	{
-		if (!boost::filesystem::exists(inputFile))
+		if (inputFile.storage_type == HPFileStorageType::kLocalFileSystem &&
+		    !boost::filesystem::exists(inputFile.file_location))
 		{
-			itsLogger.Error("Input file '" + inputFile + "' does not exist");
+			itsLogger.Error("Input file '" + inputFile.file_location + "' does not exist");
 			continue;
 		}
 
 		vector<shared_ptr<info<T>>> curInfos;
 
-		switch (util::FileType(inputFile))
+		switch (inputFile.file_type)
 		{
 			case kGRIB:
 			case kGRIB1:
@@ -390,12 +387,6 @@ vector<shared_ptr<info<T>>> fetcher::FromFile(const vector<string>& files, searc
 			{
 				auto g = GET_PLUGIN(grib);
 				curInfos = g->FromFile<T>(inputFile, options, readPackedData, readIfNotMatching);
-				break;
-			}
-			case kGRIBIndex:
-			{
-				auto g = GET_PLUGIN(grib);
-				curInfos = g->FromIndexFile<T>(inputFile, options, readPackedData, readIfNotMatching);
 				break;
 			}
 
@@ -411,7 +402,7 @@ vector<shared_ptr<info<T>>> fetcher::FromFile(const vector<string>& files, searc
 			case kCSV:
 			{
 				auto c = GET_PLUGIN(csv);
-				auto anInfo = c->FromFile<T>(inputFile, options, readIfNotMatching);
+				auto anInfo = c->FromFile<T>(inputFile.file_location, options, readIfNotMatching);
 				curInfos.push_back(anInfo);
 				break;
 			}
@@ -584,14 +575,14 @@ vector<shared_ptr<info<T>>> fetcher::FetchFromDatabase(search_options& opts, boo
 
 	HPDatabaseType dbtype = opts.configuration->DatabaseType();
 
-	if (!opts.configuration->ReadDataFromDatabase() || dbtype == kNoDatabase)
+	if (!opts.configuration->ReadFromDatabase() || dbtype == kNoDatabase)
 	{
 		return ret;
 	}
 
 	if (opts.prod.Class() == kGridClass)
 	{
-		pair<vector<string>, string> files;
+		vector<file_information> files;
 
 		if (dbtype == kRadon)
 		{
@@ -600,7 +591,7 @@ vector<shared_ptr<info<T>>> fetcher::FetchFromDatabase(search_options& opts, boo
 			files = r->Files(opts);
 		}
 
-		if (files.first.empty())
+		if (files.size() == 0)
 		{
 			const string ref_prod = opts.prod.Name();
 			const string analtime = opts.time.OriginDateTime().String("%Y%m%d%H%M%S");
@@ -610,7 +601,7 @@ vector<shared_ptr<info<T>>> fetcher::FetchFromDatabase(search_options& opts, boo
 		}
 		else
 		{
-			ret = FromFile<T>(files.first, opts, readPackedData, true);
+			ret = FromFile<T>(files, opts, readPackedData, false);
 
 			if (dynamic_pointer_cast<const plugin_configuration>(opts.configuration)->StatisticsEnabled())
 			{
@@ -658,7 +649,20 @@ pair<HPDataFoundFrom, vector<shared_ptr<info<double>>>> fetcher::FetchFromAuxili
 
 	if (!opts.configuration->AuxiliaryFiles().empty())
 	{
-		auto files = opts.configuration->AuxiliaryFiles();
+		vector<file_information> files;
+		files.reserve(opts.configuration->AuxiliaryFiles().size());
+
+		for (const auto& file : opts.configuration->AuxiliaryFiles())
+		{
+			file_information f;
+			f.file_location = file;
+			f.file_type = util::FileType(file);
+			f.offset = boost::none;
+			f.length = boost::none;
+			f.storage_type = HPFileStorageType::kLocalFileSystem;
+
+			files.push_back(f);
+		}
 
 		if (itsUseCache && opts.configuration->UseCacheForReads() && opts.configuration->ReadAllAuxiliaryFilesToCache())
 		{
@@ -754,11 +758,6 @@ void fetcher::AuxiliaryFilesRotateAndInterpolate(const search_options& opts, vec
 		    count_if(skip.begin(), skip.end(), [&](const info_t& info) { return eq(info, component); }) == 0 &&
 		    to != from && interpolate::IsSupportedGridForRotation(from))
 		{
-			if (to == kRotatedLatitudeLongitude || to == kStereographic || to == kLambertConformalConic)
-			{
-				throw runtime_error("Rotating vector components to projected area is not supported (yet)");
-			}
-
 			auto otherName = GetOtherVectorComponentName(name);
 
 			info_t u, v, other;
@@ -795,7 +794,8 @@ void fetcher::AuxiliaryFilesRotateAndInterpolate(const search_options& opts, vec
 				himan::Abort();
 			}
 
-			interpolate::RotateVectorComponents(*u, *v, opts.configuration->UseCudaForInterpolation());
+			interpolate::RotateVectorComponents(component->Grid().get(), baseGrid, *u, *v,
+			                                    opts.configuration->UseCuda());
 
 			auto c = GET_PLUGIN(cache);
 			c->Replace<double>(u);
@@ -811,8 +811,7 @@ void fetcher::AuxiliaryFilesRotateAndInterpolate(const search_options& opts, vec
 
 	if (itsDoInterpolation)
 	{
-		if (!interpolate::Interpolate(opts.configuration->BaseGrid(), infos,
-		                              opts.configuration->UseCudaForInterpolation()))
+		if (!interpolate::Interpolate(opts.configuration->BaseGrid(), infos))
 		{
 			itsLogger.Fatal("Interpolation failed");
 			himan::Abort();
@@ -951,11 +950,6 @@ void fetcher::RotateVectorComponents(vector<shared_ptr<info<T>>>& components, co
 		if (interpolate::IsVectorComponent(name) && itsDoVectorComponentRotation && to != from &&
 		    interpolate::IsSupportedGridForRotation(from))
 		{
-			if (to == kRotatedLatitudeLongitude || to == kStereographic || to == kLambertConformalConic)
-			{
-				throw runtime_error("Rotating vector components to projected area is not supported (yet)");
-			}
-
 			auto otherName = GetOtherVectorComponentName(name);
 
 			search_options opts(component->Time(), param(otherName), component->Level(), sourceProd,
@@ -990,13 +984,13 @@ void fetcher::RotateVectorComponents(vector<shared_ptr<info<T>>>& components, co
 				throw runtime_error("Unrecognized vector component parameter: " + name);
 			}
 
-			interpolate::RotateVectorComponents(*u, *v, config->UseCudaForInterpolation());
+			interpolate::RotateVectorComponents(component->Grid().get(), target, *u, *v, config->UseCuda());
 
 			// Most likely both U&V are requested, so interpolate the other one now
 			// and put it to cache.
 
 			std::vector<shared_ptr<info<T>>> list({other});
-			if (itsDoInterpolation && interpolate::Interpolate(target, list, config->UseCudaForInterpolation()))
+			if (itsDoInterpolation && interpolate::Interpolate(target, list))
 			{
 				if (itsUseCache && config->UseCacheForReads() && !other->PackedData()->HasData())
 				{

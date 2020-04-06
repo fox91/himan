@@ -38,7 +38,7 @@ HPFileType FileType(const std::string& theFile);
  */
 
 template <typename T>
-std::string MakeFileName(HPFileWriteOption fileWriteOption, const info<T>& info, const configuration& conf);
+std::string MakeFileName(const info<T>& info, const plugin_configuration& conf);
 
 /**
  * @brief Splits a string and fills the gaps if requested
@@ -60,70 +60,6 @@ std::vector<std::string> Split(const std::string& s, const std::string& delims, 
  */
 
 std::string Join(const std::vector<std::string>& elements, const std::string& delim);
-
-/**
- * @brief Calculate coefficients for transforming U and V from grid relative to earth relative.
- *
- * Algorithm by J.E. HAUGEN (HIRLAM JUNE -92), modified by K. EEROLA
- * Algorithm originally defined in hilake/TURNDD.F
- *
- * All coordinate values are given in degrees N and degrees E (negative values for S and W)
- *
- * Function works only with rotated latlon projections.
- *
- * @param regPoint Latlon coordinates of the point in question in earth-relative form
- * @param rotPoint Latlon coordinates of the point in question in grid-relative form
- * @param southPole Latlon coordinates of south pole
- * @return Four coefficients for transforming U and V
- */
-
-std::tuple<double, double, double, double> EarthRelativeUVCoefficients(const himan::point& regPoint,
-                                                                       const himan::point& rotPoint,
-                                                                       const himan::point& southPole);
-
-/**
- * @brief Calculate coefficients for transforming U and V from earth relative to grid relative.
- *
- * Algorithm by J.E. HAUGEN (HIRLAM JUNE -92), modified by K. EEROLA
- * Algorithm originally defined in hilake/TURNDD.F
- *
- * All coordinate values are given in degrees N and degrees E (negative values for S and W)
- *
- * Function works only with rotated latlon projections.
- *
- * @param regPoint Latlon coordinates of the point in question in earth-relative form
- * @param rotPoint Latlon coordinates of the point in question in grid-relative form
- * @param southPole Latlon coordinates of south pole
- * @return Four coefficients for transforming U and V
- */
-
-std::tuple<double, double, double, double> GridRelativeUVCoefficients(const himan::point& regPoint,
-                                                                      const himan::point& rotPoint,
-                                                                      const himan::point& southPole);
-
-/**
- * @brief If U and V components of a parameter are grid relative, transform them to be earth-relative
- *
- * Algorithm used is
- *
- * Ugeo = Ustereo * cos(x) + Vstereo * sin(x)
- * Vgeo = -Ustereo * sin(x) + Vstereo * cos(x)
- *
- * Where x is longitude of the point east of reference longitude
- * Note: The reference longitude is not always Greenwich longitude
- *
- * Algorithm originally defined in hilake/VPTOVM.F
- *
- * Function works only with stereographic projections.
- *
- * !!! FUNCTION HAS NOT BEEN THOROUGHLY TESTED DUE TO LACK OF INPUT UV DATA IN STEREOGRAPHIC PROJECTION !!!
- *
- * @param longitude Reference longitude
- * @param rotatedUV U and V in grid-relative form
- * @return U and V in earth-relative form
- */
-
-himan::point UVToGeographical(double longitude, const himan::point& stereoUV);
 
 /**
  * @brief Raise value to power. Function originated from grib_api.
@@ -273,6 +209,48 @@ std::string UniqueName(const plugin::search_options& options);
 
 template <typename T>
 std::string UniqueName(const info<T>& info);
+
+/**
+ * @brief Convert vector from float to double or vice versa, retaining correct
+ * missing value.
+ *
+ * Template specialization to avoid resource-wasting conversion from double --> double
+ * or float --> float
+ *
+ * T = from
+ * U = to
+ */
+
+template <typename T, typename U>
+std::vector<U> Convert(const std::vector<T>&);
+
+template <>
+inline std::vector<double> Convert(const std::vector<double>& v)
+{
+	return v;
+}
+
+template <>
+inline std::vector<float> Convert(const std::vector<float>& v)
+{
+	return v;
+}
+
+template <>
+inline std::vector<double> Convert(const std::vector<float>& v)
+{
+	std::vector<double> ret(v.size());
+	replace_copy_if(v.begin(), v.end(), ret.begin(), [](const float& val) { return IsMissing(val); }, MissingDouble());
+	return ret;
+}
+
+template <>
+inline std::vector<float> Convert(const std::vector<double>& v)
+{
+	std::vector<float> ret(v.size());
+	replace_copy_if(v.begin(), v.end(), ret.begin(), [](const double& val) { return IsMissing(val); }, MissingFloat());
+	return ret;
+}
 
 template <class... Conts>
 inline auto zip_range(Conts&... conts)

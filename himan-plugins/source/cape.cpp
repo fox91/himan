@@ -43,24 +43,6 @@ void SetDataToInfo(shared_ptr<himan::info<float>> myTargetInfo, vector<float>& L
                    vector<float>& CAPE3km, vector<float>& CIN);
 void FinalizeData(shared_ptr<himan::info<float>> myTargetInfo);
 
-vector<float> Convert(const vector<double>& arr)
-{
-	vector<float> ret(arr.size());
-	copy(arr.begin(), arr.end(), ret.begin());
-
-	replace_if(ret.begin(), ret.end(), [](const float& val) { return ::isnan(val); }, himan::MissingFloat());
-	return ret;
-}
-
-vector<double> Convert(const vector<float>& arr)
-{
-	vector<double> ret(arr.size());
-	copy(arr.begin(), arr.end(), ret.begin());
-
-	replace_if(ret.begin(), ret.end(), [](const double& val) { return ::isnan(val); }, himan::MissingDouble());
-	return ret;
-}
-
 vector<float> Sample(const vector<float>& x, const vector<float>& y, const vector<float>& samples)
 {
 	vector<float> ret(samples.size());
@@ -133,11 +115,19 @@ tuple<vec2d, vec2d, vec2d> GetSampledSourceData(shared_ptr<const himan::plugin_c
 
 	while (curLevel.Value() >= stopLevel.Value())
 	{
-		auto PInfo = f->Fetch<float>(conf, myTargetInfo->Time(), curLevel, PParam, myTargetInfo->ForecastType(), false);
-		auto TInfo = f->Fetch<float>(conf, myTargetInfo->Time(), curLevel, TParam, myTargetInfo->ForecastType(), false);
-		auto RHInfo = f->Fetch<float>(conf, myTargetInfo->Time(), curLevel, param("RH-PRCNT"),
-		                              myTargetInfo->ForecastType(), false);
+		shared_ptr<info<float>> PInfo, TInfo, RHInfo;
 
+		try
+		{
+			PInfo = f->Fetch<float>(conf, myTargetInfo->Time(), curLevel, PParam, myTargetInfo->ForecastType(), false);
+			TInfo = f->Fetch<float>(conf, myTargetInfo->Time(), curLevel, TParam, myTargetInfo->ForecastType(), false);
+			RHInfo = f->Fetch<float>(conf, myTargetInfo->Time(), curLevel, param("RH-PRCNT"),
+			                         myTargetInfo->ForecastType(), false);
+		}
+		catch (const HPExceptionType& e)
+		{
+			break;
+		}
 		const auto P = VEC(PInfo);
 		const auto T = VEC(TInfo);
 		const auto RH = VEC(RHInfo);
@@ -780,7 +770,8 @@ void SmoothData(shared_ptr<himan::info<float>> myTargetInfo)
 	auto filter = [&](const himan::param& par) {
 
 		myTargetInfo->Find<himan::param>(par);
-		himan::matrix<float> filtered = himan::numerical_functions::Filter2D<double>(myTargetInfo->Data(), filter_kernel);
+		himan::matrix<float> filtered =
+		    himan::numerical_functions::Filter2D<double>(myTargetInfo->Data(), filter_kernel);
 
 		myTargetInfo->Base()->data = move(filtered);
 	};
@@ -1844,8 +1835,8 @@ cape_source cape::Get500mMixingRatioValuesCPU(shared_ptr<info<float>> myTargetIn
 	auto stopLevel = h->LevelForHeight(myTargetInfo->Producer(), 500.);
 	auto P500m = h->VerticalValue<double>(PParam, 500.);
 
-	auto sourceData =
-	    GetSampledSourceData(itsConfiguration, myTargetInfo, Convert(P500m), Convert(curP), curLevel, stopLevel.second);
+	auto sourceData = GetSampledSourceData(itsConfiguration, myTargetInfo, util::Convert<double, float>(P500m),
+	                                       util::Convert<double, float>(curP), curLevel, stopLevel.second);
 
 	h->HeightUnit(kHPa);
 
@@ -1898,14 +1889,14 @@ cape_source cape::Get500mMixingRatioValuesCPU(shared_ptr<info<float>> myTargetIn
 			break;
 		}
 
-		tp.Process(Convert(Tpot), Pres);
-		mr.Process(Convert(MR), Pres);
+		tp.Process(util::Convert<float, double>(Tpot), Pres);
+		mr.Process(util::Convert<float, double>(MR), Pres);
 
 		k++;
 	}
 
-	auto Tpot = Convert(tp.Result());
-	auto MR = Convert(mr.Result());
+	auto Tpot = util::Convert<double, float>(tp.Result());
+	auto MR = util::Convert<double, float>(mr.Result());
 
 	auto PsurfInfo = Fetch<float>(myTargetInfo->Time(), itsBottomLevel, PParam, myTargetInfo->ForecastType(), false);
 	auto PSurf = VEC(PsurfInfo);

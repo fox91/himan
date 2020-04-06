@@ -16,12 +16,13 @@
 using namespace std;
 using namespace himan::plugin;
 
-mutex aggregationMutex;
+mutex paramMutex;
 
 #ifdef HAVE_CUDA
 namespace transformergpu
 {
-void Process(himan::info_t myTargetInfo, himan::info_t sourceInfo, double scale, double base);
+void Process(shared_ptr<const himan::plugin_configuration> conf, himan::info_t myTargetInfo, himan::info_t sourceInfo,
+             double scale, double base);
 }
 #endif
 
@@ -34,7 +35,10 @@ transformer::transformer()
       itsTargetForecastType(kUnknownType),
       itsSourceForecastType(kUnknownType),
       itsRotateVectorComponents(false),
-      itsDoTimeInterpolation(false)
+      itsDoTimeInterpolation(false),
+      itsChangeMissingTo(himan::MissingDouble()),
+      itsWriteEmptyGrid(true),
+      itsDecimalPrecision(kHPMissingInt)
 {
 	itsCudaEnabledCalculation = true;
 
@@ -269,6 +273,36 @@ void transformer::SetAdditionalParameters()
 	{
 		itsDoTimeInterpolation = util::ParseBoolean(itsConfiguration->GetValue("time_interpolation"));
 	}
+
+	if (itsConfiguration->Exists("change_missing_value_to"))
+	{
+		try
+		{
+			itsChangeMissingTo = stod(itsConfiguration->GetValue("change_missing_value_to"));
+		}
+		catch (const invalid_argument& e)
+		{
+			throw runtime_error("Unable to convert " + itsConfiguration->GetValue("change_missing_value_to") +
+			                    " to double");
+		}
+	}
+
+	if (itsConfiguration->Exists("write_empty_grid"))
+	{
+		itsWriteEmptyGrid = util::ParseBoolean(itsConfiguration->GetValue("write_empty_grid"));
+	}
+
+	if (itsConfiguration->Exists("decimal_precision"))
+	{
+		try
+		{
+			itsDecimalPrecision = stoi(itsConfiguration->GetValue("decimal_precision"));
+		}
+		catch (const invalid_argument& e)
+		{
+			throw runtime_error("Unable to convert " + itsConfiguration->GetValue("decimal_precision") + " to int");
+		}
+	}
 }
 
 void transformer::Process(shared_ptr<const plugin_configuration> conf)
@@ -336,7 +370,7 @@ void transformer::Rotate(shared_ptr<info<double>> myTargetInfo)
 	secondInfo->Data().Set(VEC(b));
 	secondInfo->Grid()->UVRelativeToGrid(b->Grid()->UVRelativeToGrid());
 
-	interpolate::RotateVectorComponents(*myTargetInfo, *secondInfo, false);
+	interpolate::RotateVectorComponents(a->Grid().get(), myTargetInfo->Grid().get(), *myTargetInfo, *secondInfo, false);
 }
 
 void transformer::Calculate(shared_ptr<info<double>> myTargetInfo, unsigned short threadIndex)
@@ -396,16 +430,19 @@ void transformer::Calculate(shared_ptr<info<double>> myTargetInfo, unsigned shor
 		}
 	}
 
-	if (itsSourceParam[0] == itsTargetParam[0] && sourceInfo->Param().Aggregation().Type() != kUnknownAggregationType)
+	if (itsSourceParam[0] == itsTargetParam[0] &&
+	    (sourceInfo->Param().Aggregation().Type() != kUnknownAggregationType ||
+	     sourceInfo->Param().ProcessingType().Type() != kUnknownProcessingType))
 	{
-		// If source parameter is an aggregation, copy that to target param
+		// If source parameter is an aggregation or processed somehow, copy that
+		// information to target param
 		param p = myTargetInfo->Param();
-		aggregation a = sourceInfo->Param().Aggregation();
-		p.Aggregation(a);
+		p.Aggregation(sourceInfo->Param().Aggregation());
+		p.ProcessingType(sourceInfo->Param().ProcessingType());
 
 		{
-			lock_guard<mutex> lock(aggregationMutex);
-			myTargetInfo->Iterator<param>().Replace(p);
+			lock_guard<mutex> lock(paramMutex);
+			myTargetInfo->Set<param>(p);
 		}
 	}
 
@@ -420,7 +457,7 @@ void transformer::Calculate(shared_ptr<info<double>> myTargetInfo, unsigned shor
 	{
 		deviceType = "GPU";
 
-		transformergpu::Process(myTargetInfo, sourceInfo, itsScale, itsBase);
+		transformergpu::Process(itsConfiguration, myTargetInfo, sourceInfo, itsScale, itsBase);
 	}
 	else
 #endif
@@ -434,6 +471,20 @@ void transformer::Calculate(shared_ptr<info<double>> myTargetInfo, unsigned shor
 		          [&](const double& value) { return fma(value, itsScale, itsBase); });
 	}
 
+	if (!IsMissing(itsChangeMissingTo))
+	{
+		auto& vec = VEC(myTargetInfo);
+		replace_if(vec.begin(), vec.end(), [=](double d) { return IsMissing(d); }, itsChangeMissingTo);
+	}
+
 	myThreadedLogger.Info("[" + deviceType + "] Missing values: " + to_string(myTargetInfo->Data().MissingCount()) +
 	                      "/" + to_string(myTargetInfo->Data().Size()));
+}
+
+void transformer::WriteToFile(const shared_ptr<info<double>> targetInfo, write_options writeOptions)
+{
+	writeOptions.write_empty_grid = itsWriteEmptyGrid;
+	writeOptions.precision = itsDecimalPrecision;
+
+	return compiled_plugin_base::WriteToFile(targetInfo, writeOptions);
 }

@@ -13,7 +13,7 @@
 #include "statistics.h"
 #include "stereographic_grid.h"
 #include <boost/filesystem.hpp>
-#include <boost/thread.hpp>
+#include <thread>
 
 #ifndef __clang_analyzer__
 
@@ -46,18 +46,14 @@ std::vector<T> TableToVector(const object& table);
 
 namespace
 {
-boost::thread_specific_ptr<lua_State> myL;
-/*struct luaDeleter {
-  void operator()(lua_State* b) { return; }
-};
-thread_local std::unique_ptr<lua_State,luaDeleter> myL;*/
+thread_local lua_State* myL;
 bool myUseCuda;
 }
 
 luatool::luatool() : itsWriteOptions()
 {
 	itsLogger = logger("luatool");
-	myL.reset();
+	myL = 0;
 }
 
 luatool::~luatool()
@@ -112,11 +108,11 @@ void luatool::Calculate(std::shared_ptr<info<double>> myTargetInfo, unsigned sho
 
 	InitLua();
 
-	ASSERT(myL.get());
+	ASSERT(myL);
 	myThreadedLogger.Info("Calculating time " + static_cast<std::string>(myTargetInfo->Time().ValidDateTime()) +
 	                      " level " + static_cast<std::string>(myTargetInfo->Level()));
 
-	globals(myL.get())["logger"] = myThreadedLogger;
+	globals(myL)["logger"] = myThreadedLogger;
 
 	for (const std::string& luaFile : itsConfiguration->GetValueList("luafile"))
 	{
@@ -131,8 +127,8 @@ void luatool::Calculate(std::shared_ptr<info<double>> myTargetInfo, unsigned sho
 		ReadFile(luaFile);
 	}
 
-	lua_close(myL.get());
-	myL.release();
+	lua_close(myL);
+	myL = 0;
 }
 
 void luatool::InitLua()
@@ -151,7 +147,7 @@ void luatool::InitLua()
 	BindLib(L);
 	BindPlugins(L);
 
-	myL.reset(L);
+	myL = L;
 }
 
 void luatool::ResetVariables(info_t myTargetInfo)
@@ -159,7 +155,7 @@ void luatool::ResetVariables(info_t myTargetInfo)
 	// Set some variable that are needed in luatool calculations
 	// but are too hard or complicated to create in the lua side
 
-	const auto L = myL.get();
+	const auto L = myL;
 
 	globals(L)["luatool"] = boost::ref(*this);
 	globals(L)["result"] = myTargetInfo;
@@ -172,6 +168,7 @@ void luatool::ResetVariables(info_t myTargetInfo)
 	globals(L)["current_forecast_type"] = forecast_type(myTargetInfo->ForecastType());
 	globals(L)["missing"] = MissingDouble();
 	globals(L)["missingf"] = MissingFloat();
+	globals(L)["kHPMissingValue"] = kHPMissingValue;  // todo: remove this constant altogether
 
 	globals(L)["kKelvin"] = constants::kKelvin;
 
@@ -199,10 +196,10 @@ bool luatool::ReadFile(const std::string& luaFile)
 	try
 	{
 		timer t(true);
-		ASSERT(myL.get());
-		if (luaL_dofile(myL.get(), luaFile.c_str()))
+		ASSERT(myL);
+		if (luaL_dofile(myL, luaFile.c_str()))
 		{
-			itsLogger.Error(lua_tostring(myL.get(), -1));
+			itsLogger.Error(lua_tostring(myL, -1));
 			return false;
 		}
 		t.Stop();
@@ -289,6 +286,20 @@ void BindEnum(lua_State* L)
 				 value("kMaximum", kMaximum),
 				 value("kMinimum", kMinimum),
 				 value("kDifference", kDifference)],
+	     class_<HPProcessingType>("HPProcessingType")
+	         .enum_("constants")[
+				 value("kUnknownProcessingType", kUnknownProcessingType),
+				 value("kProbabilityGreaterThan", kProbabilityGreaterThan),
+				 value("kProbabilityLessThan", kProbabilityLessThan),
+				 value("kProbabilityBetween", kProbabilityBetween),
+				 value("kProbabilityEquals", kProbabilityEquals),
+				 value("kProbabilityNotEquals", kProbabilityNotEquals),
+				 value("kProbabilityEqualsIn", kProbabilityEqualsIn),
+				 value("kFractile", kFractile),
+				 value("kEnsembleMean", kEnsembleMean),
+				 value("kSpread", kSpread),
+				 value("kStandardDeviation", kStandardDeviation),
+				 value("kEFI", kEFI)],
 	     class_<HPModifierType>("HPModifierType")
 	         .enum_("constants")
 	             [
@@ -470,6 +481,10 @@ void SetParam(std::shared_ptr<info<T>>& anInfo, const param& par)
 		if (par.Aggregation().Type() != kUnknownAggregationType)
 		{
 			newpar.Aggregation(par.Aggregation());
+		}
+		if (par.ProcessingType().Type() != kUnknownProcessingType)
+		{
+			newpar.ProcessingType(par.ProcessingType());
 		}
 	}
 
@@ -1033,11 +1048,12 @@ namespace luabind_workaround
 template <typename T>
 matrix<T> ProbLimitGt2D(const matrix<T>& A, const matrix<T>& B, T limit)
 {
+#ifdef HAVE_CUDA
 	if (myUseCuda)
 	{
 		return numerical_functions::ProbLimitGt2DGPU<T>(A, B, limit);
 	}
-
+#endif
 	return numerical_functions::Reduce2D<T>(A, B,
 	                                        [=](T& val1, T& val2, const T& a, const T& b) {
 		                                        if (IsValid(a * b) && a * b > limit)
@@ -1048,13 +1064,68 @@ matrix<T> ProbLimitGt2D(const matrix<T>& A, const matrix<T>& B, T limit)
 }
 
 template <typename T>
+matrix<T> ProbLimitGe2D(const matrix<T>& A, const matrix<T>& B, T limit)
+{
+#ifdef HAVE_CUDA
+        if (myUseCuda)
+        {
+                return numerical_functions::ProbLimitGt2DGPU<T>(A, B, limit);
+        }
+#endif
+        return numerical_functions::Reduce2D<T>(A, B,
+                                                [=](T& val1, T& val2, const T& a, const T& b) {
+                                                        if (IsValid(a * b) && a * b >= limit)
+                                                                val1 += T(1);
+                                                },
+                                                [](const T& val1, const T& val2) { return (val1 >= T(1)) ? T(1) : T(0); },
+                                                T(0), T(0));
+}
+
+template <typename T>
+matrix<T> ProbLimitLt2D(const matrix<T>& A, const matrix<T>& B, T limit)
+{
+#ifdef HAVE_CUDA
+        if (myUseCuda)
+        {
+                return numerical_functions::ProbLimitGt2DGPU<T>(A, B, limit);
+        }
+#endif
+        return numerical_functions::Reduce2D<T>(A, B,
+                                                [=](T& val1, T& val2, const T& a, const T& b) {
+                                                        if (IsValid(a * b) && a * b < limit)
+                                                                val1 += T(1);
+                                                },
+                                                [](const T& val1, const T& val2) { return (val1 >= T(1)) ? T(1) : T(0); },
+                                                T(0), T(0));
+}
+
+template <typename T>
+matrix<T> ProbLimitLe2D(const matrix<T>& A, const matrix<T>& B, T limit)
+{
+#ifdef HAVE_CUDA
+        if (myUseCuda)
+        {
+                return numerical_functions::ProbLimitGt2DGPU<T>(A, B, limit);
+        }
+#endif
+        return numerical_functions::Reduce2D<T>(A, B,
+                                                [=](T& val1, T& val2, const T& a, const T& b) {
+                                                        if (IsValid(a * b) && a * b <= limit)
+                                                                val1 += T(1);
+                                                },
+                                                [](const T& val1, const T& val2) { return (val1 >= T(1)) ? T(1) : T(0); },
+                                                T(0), T(0));
+}
+
+template <typename T>
 matrix<T> ProbLimitEq2D(const matrix<T>& A, const matrix<T>& B, T limit)
 {
+#ifdef HAVE_CUDA
 	if (myUseCuda)
 	{
 		return numerical_functions::ProbLimitEq2DGPU<T>(A, B, limit);
 	}
-
+#endif
 	return numerical_functions::Reduce2D<T>(A, B,
 	                                        [=](T& val1, T& val2, const T& a, const T& b) {
 		                                        if (IsValid(a * b) && a * b == limit)
@@ -1155,7 +1226,6 @@ void BindLib(lua_State* L)
 	              //.def("GetScanningMode", LUA_CMEMFN(HPScanningMode, grid, ScanningMode, void))
 	              .def("GetGridType", LUA_CMEMFN(HPGridType, grid, Type, void))
 	              .def("GetGridClass", LUA_CMEMFN(HPGridClass, grid, Class, void))
-	              .def("GetAB", LUA_CMEMFN(std::vector<double>, grid, AB, void))
 	              .def("GetSize", &grid::Size),
 	          class_<latitude_longitude_grid, grid, std::shared_ptr<latitude_longitude_grid>>("latitude_longitude_grid")
 	              .def(constructor<>())
@@ -1231,12 +1301,15 @@ void BindLib(lua_State* L)
 	              .def("GetUnivId", LUA_CMEMFN(unsigned long, param, UnivId, void))
 	              .def("SetUnivId", LUA_MEMFN(void, param, UnivId, unsigned long))
 	              .def("GetAggregation", LUA_CMEMFN(const aggregation&, param, Aggregation, void))
-	              .def("SetAggregation", LUA_MEMFN(void, param, Aggregation, const aggregation&)),
+	              .def("SetAggregation", LUA_MEMFN(void, param, Aggregation, const aggregation&))
+	              .def("GetProcessingType", LUA_CMEMFN(const processing_type&, param, ProcessingType, void))
+	              .def("SetProcessingType", LUA_MEMFN(void, param, ProcessingType, const processing_type&)),
 	          class_<level>("level")
 	              .def(constructor<HPLevelType, double>())
 	              .def(constructor<HPLevelType, double, double>())
 	              .def("ClassName", &level::ClassName)
 	              .def(tostring(self))
+	              .def("GetAB", LUA_CMEMFN(std::vector<double>, level, AB, void))
 	              .def("GetType", LUA_CMEMFN(HPLevelType, level, Type, void))
 	              .def("SetType", LUA_MEMFN(void, level, Type, HPLevelType))
 	              .def("GetValue", LUA_CMEMFN(double, level, Value, void))
@@ -1303,11 +1376,25 @@ void BindLib(lua_State* L)
 		      .def("Empty", &time_duration::Empty),
 	          class_<aggregation>("aggregation")
 	              .def(constructor<HPAggregationType, const time_duration&>())
+	              .def(constructor<HPAggregationType, const time_duration&, const time_duration&>())
 	              .def("ClassName", &aggregation::ClassName)
 	              .def("GetType", LUA_CMEMFN(HPAggregationType, aggregation, Type, void))
 	              .def("SetType", LUA_MEMFN(void, aggregation, Type, HPAggregationType))
 	              .def("GetTimeDuration", LUA_CMEMFN(time_duration, aggregation, TimeDuration, void))
-	              .def("SetTimeDuration", LUA_MEMFN(void, aggregation, TimeDuration, const time_duration&)),
+	              .def("SetTimeDuration", LUA_MEMFN(void, aggregation, TimeDuration, const time_duration&))
+	              .def("GetTimeOffset", LUA_CMEMFN(time_duration, aggregation, TimeOffset, void))
+	              .def("SetTimeOffset", LUA_MEMFN(void, aggregation, TimeOffset, const time_duration&)),
+	          class_<processing_type>("processing_type")
+	              .def(constructor<HPProcessingType, double, double>())
+	              .def("ClassName", &processing_type::ClassName)
+	              .def("GetType", LUA_CMEMFN(HPProcessingType, processing_type, Type, void))
+	              .def("SetType", LUA_MEMFN(void, processing_type, Type, HPProcessingType))
+	              .def("GetValue", LUA_CMEMFN(double, processing_type, Value, void))
+	              .def("SetValue", LUA_MEMFN(void, processing_type, Value, double))
+	              .def("GetValue2", LUA_CMEMFN(double, processing_type, Value2, void))
+	              .def("SetValue2", LUA_MEMFN(void, processing_type, Value2, double))
+	              .def("GetNumberOfEnsembleMembers", LUA_CMEMFN(int, processing_type, NumberOfEnsembleMembers, void))
+	              .def("SetNumberOfEnsembleMembers", LUA_MEMFN(void, processing_type, NumberOfEnsembleMembers, int)),
 	          class_<configuration, std::shared_ptr<configuration>>("configuration")
 	              .def(constructor<>())
 	              .def("ClassName", &configuration::ClassName)
@@ -1362,7 +1449,6 @@ void BindLib(lua_State* L)
 		      .def("Lag", &lagged_ensemble::Lag)
 		      .def("Size", &lagged_ensemble::Size)
 		      .def("ExpectedSize", &lagged_ensemble::ExpectedSize)
-		      .def("NumberOfSteps", &lagged_ensemble::NumberOfSteps)
 		      .def("VerifyValidForecastCount", &lagged_ensemble::VerifyValidForecastCount)
 		      .def("SetMaximumMissingForecasts", LUA_MEMFN(void, lagged_ensemble, MaximumMissingForecasts, int))
 		      .def("GetMaximumMissingForecasts", LUA_CMEMFN(int, lagged_ensemble, MaximumMissingForecasts, void)),
@@ -1423,6 +1509,12 @@ void BindLib(lua_State* L)
 	          def("Min2D", &numerical_functions::Min2D<float>),
                   def("ProbLimitGt2D", &luabind_workaround::ProbLimitGt2D<double>),
                   def("ProbLimitGt2D", &luabind_workaround::ProbLimitGt2D<float>),
+                  def("ProbLimitGe2D", &luabind_workaround::ProbLimitGe2D<double>),
+                  def("ProbLimitGe2D", &luabind_workaround::ProbLimitGe2D<float>),
+                  def("ProbLimitLt2D", &luabind_workaround::ProbLimitLt2D<double>),
+                  def("ProbLimitLt2D", &luabind_workaround::ProbLimitLt2D<float>),
+                  def("ProbLimitLe2D", &luabind_workaround::ProbLimitLe2D<double>),
+                  def("ProbLimitLe2D", &luabind_workaround::ProbLimitLe2D<float>),
                   def("ProbLimitEq2D", &luabind_workaround::ProbLimitEq2D<double>),
                   def("ProbLimitEq2D", &luabind_workaround::ProbLimitEq2D<float>),
 	          // metutil namespace
@@ -1520,9 +1612,9 @@ luabind::object luatool::Fetch(const forecast_time& theTime, const level& theLev
 template <typename T>
 object VectorToTable(const std::vector<T>& vec)
 {
-	ASSERT(myL.get());
+	ASSERT(myL);
 
-	object ret = newtable(myL.get());
+	object ret = newtable(myL);
 
 	size_t i = 0;
 	for (const T& val : vec)

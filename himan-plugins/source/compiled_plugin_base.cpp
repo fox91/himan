@@ -165,8 +165,7 @@ void compiled_plugin_base::WriteToFile(const shared_ptr<info<T>> targetInfo, wri
 				continue;
 			}
 
-			if (itsConfiguration->FileWriteOption() == kDatabase ||
-			    itsConfiguration->FileWriteOption() == kMultipleFiles)
+			if (itsConfiguration->WriteMode() == kSingleGridToAFile)
 			{
 				aWriter->ToFile(tempInfo, itsConfiguration);
 			}
@@ -174,7 +173,7 @@ void compiled_plugin_base::WriteToFile(const shared_ptr<info<T>> targetInfo, wri
 			{
 				lock_guard<mutex> lock(singleFileWriteMutex);
 
-				aWriter->ToFile(tempInfo, itsConfiguration, itsConfiguration->ConfigurationFile());
+				aWriter->ToFile(tempInfo, itsConfiguration);  //, itsConfiguration->ConfigurationFile());
 			}
 		}
 	};
@@ -576,7 +575,10 @@ void compiled_plugin_base::SetParams(std::vector<param>& params, const vector<le
 				}
 
 				param p(paraminfo);
+
+				// database does not provide aggregation or processing type information
 				p.Aggregation(par.Aggregation());
+				p.ProcessingType(par.ProcessingType());
 
 				par = p;
 			}
