@@ -74,6 +74,13 @@ class grib : public io_plugin
 	void WriteTime(const forecast_time& ftime, const producer& prod, const param& par);
 	void WriteParameter(const param& par, const producer& prod, const forecast_type& ftype);
 	void WriteLevel(const level& lev);
+	void WriteForecastType(const forecast_type& forecastType, const producer& prod);
+
+	template <typename T>
+	void WriteData(info<T>& anInfo);
+
+	template <typename T>
+	himan::file_information CreateGribMessage(info<T>& anInfo);
 
 	template <typename T>
 	bool CreateInfoFromGrib(const search_options& options, bool readPackedData, bool forceCaching,
@@ -87,6 +94,9 @@ class grib : public io_plugin
 
 	template <typename T>
 	void ReadData(std::shared_ptr<info<T>> newInfo, bool readPackedData) const;
+
+	void DetermineMessageNumber(file_information& finfo);
+	void WriteMessageToFile(const file_information& finfo);
 
 	/**
 	 * @brief UnpackBitmap

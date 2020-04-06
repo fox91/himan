@@ -8,6 +8,7 @@
 #include "plugin_factory.h"
 #include "producer.h"
 #include "reduced_gaussian_grid.h"
+#include "s3.h"
 #include "stereographic_grid.h"
 #include "timer.h"
 #include "util.h"
@@ -28,6 +29,8 @@ using namespace himan::plugin;
 std::string GetParamNameFromGribShortName(const std::string& paramFileName, const std::string& shortName);
 
 const double gribMissing = 32700.;
+static mutex singleGribMessageCounterMutex;
+static map<string, std::mutex> singleGribMessageCounterMap;
 
 long DetermineProductDefinitionTemplateNumber(long agg, long proc, long ftype)
 {
@@ -959,6 +962,71 @@ void grib::WriteLevel(const level& lev)
 	}
 }
 
+void grib::WriteForecastType(const forecast_type& forecastType, const producer& prod)
+{
+	// For grib1 this is simple: we only support analysis and deterministic forecasts
+	// (when writing). Those do not need any extra metadata.
+
+	if (itsGrib->Message().Edition() == 1)
+	{
+		return;
+	}
+
+	// For grib2 there are several keys:
+	// - type of data (https://apps.ecmwf.int/codes/grib/format/grib2/ctables/1/4)
+	// - type of generating process (https://apps.ecmwf.int/codes/grib/format/grib2/ctables/4/3)
+	// - product definition template number (https://apps.ecmwf.int/codes/grib/format/grib2/ctables/4/0)
+	//
+	// The key 'productDefinitionTemplateNumber' is set at WriteParameter()
+
+	switch (forecastType.Type())
+	{
+		case kAnalysis:
+			itsGrib->Message().TypeOfGeneratingProcess(0);
+			itsGrib->Message().SetLongKey("typeOfProcessedData", 0);
+			break;
+		case kDeterministic:
+			itsGrib->Message().TypeOfGeneratingProcess(2);
+			itsGrib->Message().SetLongKey("typeOfProcessedData", 2);
+			break;
+		case kEpsControl:
+		case kEpsPerturbation:
+		{
+			const long gribTOPD = (forecastType.Type() == kEpsControl ? 3 : 4);
+			itsGrib->Message().SetLongKey("typeOfProcessedData", gribTOPD);
+			itsGrib->Message().TypeOfGeneratingProcess(4);
+			itsGrib->Message().PerturbationNumber(static_cast<long>(forecastType.Value()));
+			auto r = GET_PLUGIN(radon);
+
+			try
+			{
+				const long ensembleSize = stol(r->RadonDB().GetProducerMetaData(prod.Id(), "ensemble size"));
+				itsGrib->Message().SetLongKey("numberOfForecastsInEnsemble", ensembleSize);
+			}
+			catch (const invalid_argument& e)
+			{
+				itsLogger.Warning("Unable to get valid ensemble size information from radon for producer " +
+				                  to_string(prod.Id()));
+			}
+		}
+		break;
+
+		case kStatisticalProcessing:
+			// "Post-processed forecast", one could consider everything produced by
+			// Himan to be of this category but we only use this to represent statistical
+			// post processing
+			itsGrib->Message().TypeOfGeneratingProcess(13);
+			// Use locally reserved number because standard tables do not have a suitable
+			// option
+			itsGrib->Message().SetLongKey("typeOfProcessedData", 192);
+			break;
+
+		default:
+			itsLogger.Warning("Unrecognized forecast type: " + static_cast<string>(forecastType));
+			break;
+	}
+}
+
 template <typename T>
 void WriteDataValues(const vector<T>&, NFmiGribMessage&);
 
@@ -985,152 +1053,57 @@ himan::file_information grib::ToFile(info<double>& anInfo)
 	return ToFile<double>(anInfo);
 }
 
-template <typename T>
-himan::file_information grib::ToFile(info<T>& anInfo)
+int DetermineCorrectGribEdition(int edition, const himan::forecast_type& ftype, const himan::forecast_time& ftime,
+                                const himan::level& lvl, const himan::param& par)
 {
-	// Write only that data which is currently set at descriptors
-
-	timer aTimer;
-	aTimer.Start();
-
-	if (anInfo.Grid()->Class() == kIrregularGrid && anInfo.Grid()->Type() != kReducedGaussian)
+	if (edition == 2)
 	{
-		itsLogger.Error("Unable to write irregular grid of type " + HPGridTypeToString.at(anInfo.Grid()->Type()) +
-		                " to grib");
-		throw kInvalidWriteOptions;
+		// never switch from 2 to 1
+		return 2;
 	}
-
-	bool appendToFile = (itsWriteOptions.configuration->WriteMode() == kAllGridsToAFile ||
-	                     itsWriteOptions.configuration->WriteMode() == kFewGridsToAFile);
-
-	if (appendToFile && (itsWriteOptions.configuration->FileCompression() == kGZIP ||
-	                     itsWriteOptions.configuration->FileCompression() == kBZIP2))
-	{
-		itsLogger.Warning("Unable to write multiple grids to a packed file");
-		appendToFile = false;
-	}
-
-	file_information finfo;
-	finfo.file_location = util::MakeFileName(anInfo, *itsWriteOptions.configuration) + ".grib";
-	finfo.file_type = kGRIB1;
-	finfo.storage_type = kLocalFileSystem;
-
-	if (itsWriteOptions.configuration->OutputFileType() == kGRIB2)
-	{
-		finfo.file_location += "2";
-		finfo.file_type = kGRIB2;
-	}
-
-	if (itsWriteOptions.configuration->FileCompression() == kGZIP)
-	{
-		finfo.file_location += ".gz";
-	}
-	else if (itsWriteOptions.configuration->FileCompression() == kBZIP2)
-	{
-		finfo.file_location += ".bz2";
-	}
-
-	namespace fs = boost::filesystem;
-
-	fs::path pathname(finfo.file_location);
-
-	if (!pathname.parent_path().empty() && !fs::is_directory(pathname.parent_path()))
-	{
-		fs::create_directories(pathname.parent_path());
-	}
-
-	long edition = static_cast<long>(itsWriteOptions.configuration->OutputFileType());
 
 	// Check levelvalue, forecast type and param processing type since those might force us to change to grib2!
 
-	HPForecastType forecastType = anInfo.ForecastType().Type();
+	using namespace himan;
 
-	if (edition == 1 &&
-	    (anInfo.Level().AB().size() > 255 || (forecastType == kEpsControl || forecastType == kEpsPerturbation) ||
-	     anInfo.Param().ProcessingType().Type() != kUnknownProcessingType || anInfo.Time().Step().Minutes() % 60 != 0))
+	const bool lvlCondition = lvl.AB().size() > 255;
+	const bool ftypeCondition = (ftype.Type() != kAnalysis && ftype.Type() != kDeterministic);
+	const bool parCondition = par.ProcessingType().Type() != kUnknownProcessingType;
+	const bool timeCondition = ftime.Step().Minutes() % 60 != 0;
+
+	if (lvlCondition || ftypeCondition || parCondition || timeCondition)
 	{
-		itsLogger.Trace("File type forced to GRIB2 (level value: " + to_string(anInfo.Level().Value()) +
-		                ", forecast type: " + HPForecastTypeToString.at(forecastType) +
-		                ", processing type: " + HPProcessingTypeToString.at(anInfo.Param().ProcessingType().Type()) +
-		                " step: " + static_cast<string>(anInfo.Time().Step()) + ")");
-		edition = 2;
-		finfo.file_type = kGRIB2;
-
-		if (itsWriteOptions.configuration->FileCompression() == kNoCompression &&
-		    itsWriteOptions.configuration->WriteMode() != kAllGridsToAFile)
-		{
-			finfo.file_location += "2";
-		}
-
-		if (itsWriteOptions.configuration->FileCompression() == kGZIP)
-		{
-			finfo.file_location.insert(finfo.file_location.end() - 3, '2');
-		}
-		else if (itsWriteOptions.configuration->FileCompression() == kBZIP2)
-		{
-			finfo.file_location.insert(finfo.file_location.end() - 4, '2');
-		}
-		else if (itsWriteOptions.configuration->FileCompression() != kNoCompression)
-		{
-			itsLogger.Error("Unable to write to compressed grib. Unknown file compression: " +
-			                HPFileCompressionToString.at(itsWriteOptions.configuration->FileCompression()));
-			throw kInvalidWriteOptions;
-		}
+		himan::logger lgr("grib");
+		lgr.Trace("File type forced to GRIB2 (level value: " + to_string(lvl.Value()) +
+		          ", forecast type: " + HPForecastTypeToString.at(ftype.Type()) +
+		          ", processing type: " + HPProcessingTypeToString.at(par.ProcessingType().Type()) +
+		          " step: " + static_cast<string>(ftime.Step()) + ")");
+		return 2;
 	}
 
-	itsGrib->Message().Edition(edition);
+	return edition;
+}
 
-	if (anInfo.Producer().Centre() == kHPMissingInt)
+himan::forecast_type DetermineCorrectForecastType(const himan::forecast_type& ftype, const himan::param& par)
+{
+	// A kind of a workaround to make sure metadata in grib2 is correct when writing
+	// statistically processed fields.
+
+	using namespace himan;
+
+	if (par.ProcessingType().Type() != kUnknownProcessingType && ftype.Type() != kStatisticalProcessing)
 	{
-		itsGrib->Message().Centre(86);
-		itsGrib->Message().Process(255);
-	}
-	else
-	{
-		itsGrib->Message().Centre(anInfo.Producer().Centre());
-		itsGrib->Message().Process(anInfo.Producer().Process());
-	}
-
-	// Forecast type
-
-	// Note: forecast type is also checked in WriteParameter(), because
-	// it might affect productDefinitionTemplateNumber (grib2)
-
-	itsGrib->Message().ForecastType(anInfo.ForecastType().Type());
-
-	if (static_cast<int>(anInfo.ForecastType().Type()) > 2)
-	{
-		itsGrib->Message().ForecastTypeValue(static_cast<long>(anInfo.ForecastType().Value()));
-		auto r = GET_PLUGIN(radon);
-
-		try
-		{
-			const long ensembleSize = stol(r->RadonDB().GetProducerMetaData(anInfo.Producer().Id(), "ensemble size"));
-			itsGrib->Message().SetLongKey("numberOfForecastsInEnsemble", ensembleSize);
-		}
-		catch (const invalid_argument& e)
-		{
-			itsLogger.Warning("Unable to get valid ensemble size information from radon for producer " +
-			                  to_string(anInfo.Producer().Id()));
-		}
+		logger lgr("grib");
+		lgr.Debug("Changing forecast type from " + static_cast<string>(ftype) + " to statistical processing");
+		return forecast_type(kStatisticalProcessing);
 	}
 
-	// Parameter
+	return ftype;
+}
 
-	WriteParameter(anInfo.Param(), anInfo.Producer(), anInfo.ForecastType());
-
-	// Area and Grid
-
-	WriteAreaAndGrid(anInfo.Grid(), anInfo.Producer());
-
-	// Time information
-
-	WriteTime(anInfo.Time(), anInfo.Producer(), anInfo.Param());
-
-	// Level
-
-	WriteLevel(anInfo.Level());
-
+template <typename T>
+void grib::WriteData(info<T>& anInfo)
+{
 	// set to missing value to a large value to prevent it from mixing up with valid
 	// values in the data
 
@@ -1152,7 +1125,7 @@ himan::file_information grib::ToFile(info<T>& anInfo)
 
 	long bitsPerValue;
 
-	if (edition == 2 && (paramName == "PRECFORM-N" || paramName == "PRECFORM2-N"))
+	if (itsGrib->Message().Edition() == 2 && (paramName == "PRECFORM-N" || paramName == "PRECFORM2-N"))
 	{
 		// We take a copy of the data, because the values at cache should not change
 		auto values = anInfo.Data().Values();
@@ -1185,12 +1158,96 @@ himan::file_information grib::ToFile(info<T>& anInfo)
 
 	// Return missing value to nan if info is recycled (luatool)
 	anInfo.Data().MissingValue(MissingValue<T>());
+}
 
-	if (edition == 2 && itsWriteOptions.packing_type == kJpegPacking)
+template void grib::WriteData<float>(info<float>&);
+template void grib::WriteData<double>(info<double>&);
+
+template <typename T>
+himan::file_information grib::CreateGribMessage(info<T>& anInfo)
+{
+	// Write only that data which is currently set at descriptors
+
+	file_information finfo;
+	finfo.file_location = util::MakeFileName(anInfo, *itsWriteOptions.configuration);
+	finfo.storage_type = itsWriteOptions.configuration->WriteStorageType();
+
+	long edition = DetermineCorrectGribEdition(static_cast<int>(itsWriteOptions.configuration->OutputFileType()),
+	                                           anInfo.ForecastType(), anInfo.Time(), anInfo.Level(), anInfo.Param());
+
+	finfo.file_type = static_cast<HPFileType>(edition);
+
+	if (edition == 2 && itsWriteOptions.configuration->OutputFileType() == kGRIB1)
 	{
-		itsGrib->Message().PackingType("grid_jpeg");
+		// backwards compatibility: previously grib version number was
+		// not appended to filename when 'file_write' : 'single'
+		if ((itsWriteOptions.configuration->LegacyWriteMode() == false ||
+		     itsWriteOptions.configuration->WriteMode() != kAllGridsToAFile))
+		{
+			finfo.file_location += "2";
+		}
 	}
 
+	if (itsWriteOptions.configuration->FileCompression() == kGZIP)
+	{
+		finfo.file_location += ".gz";
+	}
+	else if (itsWriteOptions.configuration->FileCompression() == kBZIP2)
+	{
+		finfo.file_location += ".bz2";
+	}
+
+	itsGrib->Message().Edition(edition);
+
+	if (anInfo.Producer().Centre() == kHPMissingInt)
+	{
+		itsGrib->Message().Centre(86);
+		itsGrib->Message().Process(255);
+	}
+	else
+	{
+		itsGrib->Message().Centre(anInfo.Producer().Centre());
+		itsGrib->Message().Process(anInfo.Producer().Process());
+	}
+
+	// Parameter
+
+	WriteParameter(anInfo.Param(), anInfo.Producer(), anInfo.ForecastType());
+
+	// Forecast type
+
+	WriteForecastType(DetermineCorrectForecastType(anInfo.ForecastType(), anInfo.Param()), anInfo.Producer());
+
+	// Area and Grid
+
+	WriteAreaAndGrid(anInfo.Grid(), anInfo.Producer());
+
+	// Time information
+
+	WriteTime(anInfo.Time(), anInfo.Producer(), anInfo.Param());
+
+	// Level
+
+	WriteLevel(anInfo.Level());
+
+	// Set data to grib with correct precision and missing value
+
+	WriteData<T>(anInfo);
+
+	if (edition == 2)
+	{
+		switch (itsWriteOptions.configuration->PackingType())
+		{
+			case kJpegPacking:
+				itsGrib->Message().PackingType("grid_jpeg");
+				break;
+			case kCcsdsPacking:
+				itsGrib->Message().PackingType("grid_ccsds");
+				break;
+			default:
+				break;
+		}
+	}
 	/*
 	 *  GRIB 1
 	 *
@@ -1198,12 +1255,10 @@ himan::file_information grib::ToFile(info<T>& anInfo)
 	 *	1	0		Direction increments not given
 	 *	1	1		Direction increments given
 	 *	2	0		Earth assumed spherical with radius = 6367.47 km
-	 *	2	1		Earth assumed oblate spheroid with size as determined by IAU in 1965: 6378.160 km, 6356.775 km, f =
-	 *1/297.0
-	 *	3-4	0		reserved (set to 0)
-	 *	5	0		u- and v-components of vector quantities resolved relative to easterly and northerly directions
-	 * 	5	1		u and v components of vector quantities resolved relative to the defined grid in the direction of
-	 *increasing x and y (or i and j) coordinates respectively
+	 *	2	1		Earth assumed oblate spheroid with size as determined by IAU in 1965: 6378.160 km, 6356.775 km,
+	 *f = 1/297.0 3-4	0		reserved (set to 0) 5	0		u- and v-components of vector quantities resolved
+	 *relative to easterly and northerly directions 5	1		u and v components of vector quantities resolved
+	 *relative to the defined grid in the direction of increasing x and y (or i and j) coordinates respectively
 	 *	6-8	0		reserved (set to 0)
 	 *
 	 *	GRIB2
@@ -1250,54 +1305,115 @@ himan::file_information grib::ToFile(info<T>& anInfo)
 		itsGrib->Message().PV(AB, AB.size());
 	}
 
+	return finfo;
+}
+
+template himan::file_information grib::CreateGribMessage<double>(info<double>&);
+template himan::file_information grib::CreateGribMessage<float>(info<float>&);
+
+void grib::DetermineMessageNumber(file_information& finfo)
+{
 	// message length can only be received from eccodes since it includes
 	// all grib headers etc
 	finfo.length = itsGrib->Message().GetLongKey("totalLength");
 
-	if (itsWriteOptions.configuration->WriteMode() != kSingleGridToAFile)
-	{
-		// appending to a file is a serial operation -- two threads cannot
-		// append to a single file simultaneously. therefore offset is just
-		// the size of the file so far.
-
-		try
-		{
-			finfo.offset = boost::filesystem::file_size(finfo.file_location);
-		}
-		catch (const boost::filesystem::filesystem_error& e)
-		{
-			finfo.offset = 0;
-		}
-
-		// handling message number is a bit tricker. fmigrib library cannot really
-		// be used for tracking message no of written messages, because neither it
-		// nor eccodes has any visibility to any ossibly existing messages in a file
-		// that is appended to. therefore here we are tracking the message count per
-		// file, but this is assuming that when himan starts, the file appended to
-		// does not exist!
-
-		static std::map<std::string, unsigned long> messages;
-
-		try
-		{
-			messages.at(finfo.file_location) = messages.at(finfo.file_location) + 1;
-		}
-		catch (const out_of_range& e)
-		{
-			messages[finfo.file_location] = 0;
-		}
-
-		finfo.message_no = messages.at(finfo.file_location);
-	}
-	else
+	if (itsWriteOptions.configuration->WriteMode() == kSingleGridToAFile)
 	{
 		finfo.offset = 0;
 		finfo.message_no = 0;
+		return;
 	}
 
-	itsGrib->Message().Write(finfo.file_location, appendToFile);
+	// appending to a file is a serial operation -- two threads cannot
+	// do it to a single file simultaneously. therefore offset is just
+	// the size of the file so far.
+	// because we don't want to actually fetch the file size every time
+	// (too slow), store the size in a variable
+
+	// handling message number is a bit tricker. fmigrib library cannot really
+	// be used for tracking message number of written messages, because neither it
+	// nor eccodes has any visibility to any possibly existing messages in a file
+	// that is being appended to. therefore here we are tracking the message count
+	// per file
+
+	static std::map<std::string, unsigned long> offsets, messages;
+
+	try
+	{
+		messages.at(finfo.file_location) = messages.at(finfo.file_location) + 1;
+	}
+	catch (const out_of_range& e)
+	{
+		if (boost::filesystem::exists(finfo.file_location) == false)
+		{
+			// file does not exist yet --> start counting from msg 0
+			offsets[finfo.file_location] = 0;
+			messages[finfo.file_location] = 0;
+		}
+		else
+		{
+			// file existed before Himan started --> count the messages from
+			// the existing files and start numbering from there
+			NFmiGrib rdr;
+			rdr.Open(finfo.file_location);
+			messages[finfo.file_location] = rdr.MessageCount();
+			offsets[finfo.file_location] = boost::filesystem::file_size(finfo.file_location);
+		}
+	}
+
+	finfo.offset = offsets.at(finfo.file_location);
+	finfo.message_no = messages.at(finfo.file_location);
+
+	offsets.at(finfo.file_location) = offsets.at(finfo.file_location) + finfo.length.get();
+}
+
+void grib::WriteMessageToFile(const file_information& finfo)
+{
+	timer aTimer(true);
+	bool appendToFile = (itsWriteOptions.configuration->WriteMode() == kAllGridsToAFile ||
+	                     itsWriteOptions.configuration->WriteMode() == kFewGridsToAFile);
+
+	if (appendToFile && (itsWriteOptions.configuration->FileCompression() == kGZIP ||
+	                     itsWriteOptions.configuration->FileCompression() == kBZIP2))
+	{
+		itsLogger.Warning("Unable to write multiple grids to a packed file");
+		appendToFile = false;
+	}
+
+	if (finfo.file_location.find("s3://") != string::npos)
+	{
+		if (itsWriteOptions.configuration->WriteMode() != kSingleGridToAFile)
+		{
+			itsLogger.Fatal("Write to S3 only supported with write_mode = single");
+			himan::Abort();
+		}
+		if (finfo.file_location.find("s3://") == string::npos)
+		{
+			itsLogger.Fatal("File name needs to start with s3:// when writing to s3");
+			himan::Abort();
+		}
+
+		himan::buffer buff;
+		buff.length = finfo.length.get();
+		buff.data = static_cast<unsigned char*>(malloc(buff.length));
+		itsGrib->Message().GetMessage(buff.data, buff.length);
+		s3::WriteObject(finfo.file_location, buff);
+	}
+	else
+	{
+		namespace fs = boost::filesystem;
+		fs::path pathname(finfo.file_location);
+
+		if (!pathname.parent_path().empty() && !fs::is_directory(pathname.parent_path()))
+		{
+			fs::create_directories(pathname.parent_path());
+		}
+
+		itsGrib->Message().Write(finfo.file_location, appendToFile);
+	}
 
 	aTimer.Stop();
+
 	const float duration = static_cast<float>(aTimer.GetTime());
 	const float bytes = static_cast<float>(finfo.length.get());  // TODO: does not work correctly if file is packed
 	const float speed = (bytes / 1024.f / 1024.f) / (duration / 1000.f);
@@ -1310,7 +1426,43 @@ himan::file_information grib::ToFile(info<T>& anInfo)
 
 	ss << verb << "file '" << finfo.file_location << "' (" << fixed << speed << " MB/s)";
 	itsLogger.Info(ss.str());
+}
 
+template <typename T>
+himan::file_information grib::ToFile(info<T>& anInfo)
+{
+	if (anInfo.Grid()->Class() == kIrregularGrid && anInfo.Grid()->Type() != kReducedGaussian)
+	{
+		itsLogger.Error("Unable to write irregular grid of type " + HPGridTypeToString.at(anInfo.Grid()->Type()) +
+		                " to grib");
+		throw kInvalidWriteOptions;
+	}
+
+	auto finfo = CreateGribMessage<T>(anInfo);
+
+	if (itsWriteOptions.configuration->WriteMode() != kSingleGridToAFile)
+	{
+		pair<map<string, std::mutex>::iterator, bool> muret;
+
+		// Acquire mutex to (possibly) modify map containing "file name":"mutex" pairs
+		unique_lock<mutex> sflock(singleGribMessageCounterMutex);
+		// create or refer to a mutex for this specific file name
+		muret = singleGribMessageCounterMap.emplace(piecewise_construct, forward_as_tuple(finfo.file_location),
+		                                            forward_as_tuple());
+		// allow other threads to modify the map so as not to block threads writing
+		// to other files
+		sflock.unlock();
+		// lock the mutex for this file name
+		lock_guard<mutex> uniqueLock(muret.first->second);
+
+		DetermineMessageNumber(finfo);
+		WriteMessageToFile(finfo);
+	}
+	else
+	{
+		DetermineMessageNumber(finfo);
+		WriteMessageToFile(finfo);
+	}
 	return finfo;
 }
 
@@ -1378,8 +1530,8 @@ himan::earth_shape<double> ReadEarthShape(const NFmiGribMessage& msg)
 				break;
 			}
 			case 4:
-				// Earth assumed oblate spheroid as defined in IAG-GRS80 model (major axis = 6,378,137.0 m, minor axis =
-				// 6,356,752.314 m, f = 1/298.257222101)
+				// Earth assumed oblate spheroid as defined in IAG-GRS80 model (major axis = 6,378,137.0 m, minor
+				// axis = 6,356,752.314 m, f = 1/298.257222101)
 				a = 6378137;
 				b = 6356752.314;
 				break;
@@ -1410,8 +1562,8 @@ himan::earth_shape<double> ReadEarthShape(const NFmiGribMessage& msg)
 				a = b = 6371200;
 				break;
 			case 9:
-				//  Earth represented by the Ordnance Survey Great Britain 1936 Datum, using the Airy 1830 Spheroid, the
-				//  Greenwich meridian as 0 longitude, and the Newlyn datum as mean sea level, 0 height
+				//  Earth represented by the Ordnance Survey Great Britain 1936 Datum, using the Airy 1830 Spheroid,
+				//  the Greenwich meridian as 0 longitude, and the Newlyn datum as mean sea level, 0 height
 				a = 6377563.396;
 				b = 6356256.909;
 				break;
@@ -1479,9 +1631,10 @@ unique_ptr<himan::grid> grib::ReadAreaAndGrid() const
 	// handle grib 1 & grib 2 longitude values in a smart way. (a single geometry
 	// can have coordinates in both ways!)
 
-	long centre = itsGrib->Message().Centre();
+	const long centre = itsGrib->Message().Centre();
+	const long ident = itsGrib->Message().Process();
 
-	if (itsGrib->Message().Edition() == 2 && (centre == 98 || centre == 86) && X0 != 0)
+	if (itsGrib->Message().Edition() == 2 && (centre == 98 || centre == 86) && ident != 244 && X0 != 0)
 	{
 		X0 -= 360;
 		if (X0 < -180)
@@ -2010,44 +2163,72 @@ himan::producer grib::ReadProducer(const search_options& options) const
 	{
 		// Do a double check and fetch the fmi producer id from database.
 
-		long typeId = 1;  // deterministic forecast, default
-		long msgType = itsGrib->Message().ForecastType();
-
-		if (msgType == 2)
-		{
-			typeId = 2;  // ANALYSIS
-		}
-		else if (msgType == 3 || msgType == 4)
-		{
-			typeId = 3;  // ENSEMBLE
-		}
-
 		auto r = GET_PLUGIN(radon);
 
-		auto prodInfo = r->RadonDB().GetProducerFromGrib(centre, process, typeId);
+		if (centre == 98)
+		{
+			// legacy: for ECMWF must still separate between different produces
+			// based on forecast type
+			// future goal: forecast type is not a producer property
+			long typeId = 1;  // deterministic forecast, default
+			long msgType = itsGrib->Message().ForecastType();
 
-		if (!prodInfo.empty())
-		{
-			prod.Id(stoi(prodInfo["id"]));
-		}
-		else
-		{
-			if (centre == 98 && (process <= 149 && process >= 142))
+			if (msgType == 2)
 			{
-				if (typeId == 1 || typeId == 2)
-				{
-					prod.Id(131);
-				}
-				else if (typeId == 3)
-				{
-					prod.Id(134);
-				}
+				typeId = 2;  // ANALYSIS
+			}
+			else if (msgType == 3 || msgType == 4)
+			{
+				typeId = 3;  // ENSEMBLE
+			}
 
+			auto prodInfo = r->RadonDB().GetProducerFromGrib(centre, process, typeId);
+
+			if (!prodInfo.empty())
+			{
+				prod.Id(stoi(prodInfo["id"]));
 				return prod;
 			}
 
-			itsLogger.Warning("Producer information not found from database for centre " + to_string(centre) +
-			                  ", process " + to_string(process) + " type " + to_string(typeId));
+			if (process <= 149 && process >= 142)
+			{
+				if (itsGrib->Message().ForecastType() <= 2)
+				{
+					prod.Id(131);
+				}
+				else if (itsGrib->Message().ForecastType() >= 3)
+				{
+					prod.Id(134);
+				}
+			}
+			else
+			{
+				itsLogger.Warning("Producer information not found from database for centre " + to_string(centre) +
+				                  ", process " + to_string(process));
+			}
+		}
+		else if (centre == 251 && process == 40)
+		{
+			// support old (40) and new (0) number for MEPS
+			prod.Id(4);
+		}
+		else
+		{
+			auto prodInfo = r->RadonDB().GetProducerFromGrib(centre, process);
+			if (prodInfo.empty())
+			{
+				itsLogger.Warning("Producer information not found from database for centre " + to_string(centre) +
+				                  ", process " + to_string(process));
+			}
+			else if (prodInfo.size() >= 1)
+			{
+				prod.Id(stoi(prodInfo[0]["id"]));
+				if (prodInfo.size() > 1)
+				{
+					itsLogger.Warning("More than producer definition found from radon for centre " + to_string(centre) +
+					                  ", process " + to_string(process) + ", selecting first one=" + prodInfo[0]["Id"]);
+				}
+			}
 		}
 	}
 
@@ -2091,7 +2272,7 @@ void grib::ReadData(shared_ptr<info<T>> newInfo, bool readPackedData) const
 
 	if (itsGrib->Message().Edition() == 2 && (paramName == "PRECFORM-N" || paramName == "PRECFORM2-N") &&
 	    (producerId == 230 || producerId == 240 || producerId == 243 || producerId == 250 || producerId == 260 ||
-	     producerId == 270))
+	     producerId == 265 || producerId == 270))
 	{
 		decodePrecipitationForm = true;
 	}
@@ -2411,7 +2592,7 @@ vector<shared_ptr<himan::info<T>>> grib::FromFile(const file_information& theInp
 
 	if (theInputFile.offset)
 	{
-		ss << "position " << theInputFile.offset.get() << ":" << bytes;
+		ss << "position " << theInputFile.offset.get() << ":" << bytes << " msg# " << theInputFile.message_no.get();
 	}
 
 	ss << " (" << fixed << speed << " MB/s)";

@@ -355,8 +355,25 @@ enum HPPackingType
 	kUnknownPackingType = 0,
 	kUnpacked,
 	kSimplePacking,
-	kJpegPacking
+	kJpegPacking,
+	kCcsdsPacking
 };
+
+const boost::unordered_map<HPPackingType, std::string> HPPackingTypeToString =
+    ba::map_list_of
+	(kUnknownPackingType, "unknown")
+	(kUnpacked, "unpacked")
+	(kSimplePacking, "simple_packing")
+	(kJpegPacking, "jpeg_packing")
+	(kCcsdsPacking, "ccsds_packing");
+
+const boost::unordered_map<std::string, HPPackingType> HPStringToPackingType =
+    ba::map_list_of
+	("unknown", kUnknownPackingType)
+	("unpacked", kUnpacked)
+	("simple_packing", kSimplePacking)
+	("jpeg_packing", kJpegPacking)
+	("ccsds_packing", kCcsdsPacking);
 
 enum HPAggregationType
 {
@@ -501,7 +518,8 @@ enum HPForecastType
 	kDeterministic,
 	kAnalysis,
 	kEpsPerturbation = 3,
-	kEpsControl = 4
+	kEpsControl = 4,
+	kStatisticalProcessing = 5
 };
 
 const boost::unordered_map<HPForecastType, std::string> HPForecastTypeToString =
@@ -510,7 +528,8 @@ const boost::unordered_map<HPForecastType, std::string> HPForecastTypeToString =
 	(kDeterministic, "deterministic")
 	(kAnalysis, "analysis")
 	(kEpsControl, "eps control")
-	(kEpsPerturbation, "eps perturbation");
+	(kEpsPerturbation, "eps perturbation")
+	(kStatisticalProcessing, "statistical post processing");
 
 const boost::unordered_map<std::string, HPForecastType> HPStringToForecastType =
     ba::map_list_of
@@ -578,6 +597,13 @@ const boost::unordered_map<HPFileStorageType, std::string> HPFileStorageTypeToSt
 	(kUnknownStorageType, "unknown")
 	(kLocalFileSystem, "local file system")
 	(kS3ObjectStorageSystem, "s3 object storage system")
+	;
+
+const boost::unordered_map<std::string, HPFileStorageType> HPStringToFileStorageType =
+    ba::map_list_of
+	("unknown", kUnknownStorageType)
+	("local", kLocalFileSystem)
+	("s3", kS3ObjectStorageSystem)
 	;
 
 // clang-format on

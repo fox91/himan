@@ -3,17 +3,15 @@
 #include "level.h"
 #include "logger.h"
 #include "plugin_factory.h"
-#include <thread>
 #include <iostream>
 #include <map>
+#include <thread>
 
 #include "radon.h"
 #include "writer.h"
 
 using namespace std;
 using namespace himan::plugin;
-
-mutex mySingleFileWriteMutex;
 
 const int SUB_THREAD_COUNT = 5;
 
@@ -42,6 +40,7 @@ split_sum::split_sum()
 	sourceParameters["SN-3-MM"] = {param("SNACC-KGM2")};
 	sourceParameters["SN-6-MM"] = {param("SNACC-KGM2")};
 	sourceParameters["SN-24-MM"] = {param("SNACC-KGM2")};
+	sourceParameters["SN-120-MM"] = {param("SNACC-KGM2")};
 
 	sourceParameters["SNR-KGM2"] = {param("SNACC-KGM2")};
 	sourceParameters["SNRC-KGM2"] = {param("SNC-KGM2")};
@@ -151,6 +150,16 @@ void split_sum::Process(std::shared_ptr<const plugin_configuration> conf)
 		parm.Unit(kMm);
 
 		parm.Aggregation(aggregation(kAccumulation, time_duration("24:00")));
+
+		params.push_back(parm);
+	}
+
+	if (itsConfiguration->Exists("sn120h") && itsConfiguration->GetValue("sn120h") == "true")
+	{
+		param parm("SN-120-MM");
+		parm.Unit(kMm);
+
+		parm.Aggregation(aggregation(kAccumulation, time_duration("120:00")));
 
 		params.push_back(parm);
 	}
@@ -341,15 +350,15 @@ void split_sum::Calculate(shared_ptr<info<double>> myTargetInfo, unsigned short 
 		infos.push_back(newInfo);  // extend lifetime over this loop
 
 		threads.push_back(new thread(&split_sum::DoParam, this, newInfo, myTargetInfo->Param().Name(),
-		                                     to_string(threadIndex) + "_" + to_string(subThreadIndex)));
+		                             to_string(threadIndex) + "_" + to_string(subThreadIndex)));
 
 		if (subThreadIndex % SUB_THREAD_COUNT == 0)
 		{
 			for (auto& thread : threads)
-                        {
-                                if (thread->joinable())
-                                        thread->join();
-                        }
+			{
+				if (thread->joinable())
+					thread->join();
+			}
 
 			infos.clear();
 		}
@@ -357,8 +366,8 @@ void split_sum::Calculate(shared_ptr<info<double>> myTargetInfo, unsigned short 
 
 	for (auto& thread : threads)
 	{
-                if (thread->joinable())
-                	thread->join();
+		if (thread->joinable())
+			thread->join();
 	}
 }
 
@@ -469,7 +478,8 @@ void split_sum::DoParam(info_t myTargetInfo, std::string myParamName, string sub
 	// EC gives precipitation in meters, we are calculating millimeters
 
 	if (curSumInfo->Param().Unit() == kM ||
-	    ((myTargetInfo->Producer().Id() == 240 || myTargetInfo->Producer().Id() == 243) &&
+	    ((myTargetInfo->Producer().Id() == 240 || myTargetInfo->Producer().Id() == 241 ||
+	      myTargetInfo->Producer().Id() == 243) &&
 	     !isRadiationCalculation))  // HIMAN-98
 	{
 		scaleFactor = 1000.;

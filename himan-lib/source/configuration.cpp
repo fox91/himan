@@ -39,7 +39,10 @@ configuration::configuration()
       itsUpdateSSStateTable(true),
       itsUploadStatistics(true),
       itsWriteToDatabase(false),
-      itsLegacyWriteMode(false)
+      itsLegacyWriteMode(false),
+      itsWriteStorageType(kLocalFileSystem),
+      itsFilenameTemplate(),
+      itsPackingType(kSimplePacking)
 {
 }
 
@@ -91,6 +94,9 @@ std::ostream& configuration::Write(std::ostream& file) const
 	file << "__itsUploadStatistics__" << itsUploadStatistics << std::endl;
 	file << "__itsWriteToDatabase__" << itsWriteToDatabase << std::endl;
 	file << "__itsLegacyWriteMode__" << itsLegacyWriteMode << std::endl;
+	file << "__itsWriteStorageType__" << HPFileStorageTypeToString.at(itsWriteStorageType) << std::endl;
+	file << "__itsFilenameTemplate__" << itsFilenameTemplate << std::endl;
+	file << "__itsPackingType__" << HPPackingTypeToString.at(itsPackingType) << std::endl;
 
 	return file;
 }
@@ -355,4 +361,34 @@ bool configuration::LegacyWriteMode() const
 void configuration::LegacyWriteMode(bool theLegacyWriteMode)
 {
 	itsLegacyWriteMode = theLegacyWriteMode;
+}
+
+HPFileStorageType configuration::WriteStorageType() const
+{
+	return itsWriteStorageType;
+}
+
+void configuration::WriteStorageType(HPFileStorageType theStorageType)
+{
+	itsWriteStorageType = theStorageType;
+}
+
+std::string configuration::FilenameTemplate() const
+{
+	return itsFilenameTemplate;
+}
+
+void configuration::FilenameTemplate(const std::string& theFilenameTemplate)
+{
+	itsFilenameTemplate = theFilenameTemplate;
+}
+
+HPPackingType configuration::PackingType() const
+{
+	return itsPackingType;
+}
+
+void configuration::PackingType(HPPackingType thePackingType)
+{
+	itsPackingType = thePackingType;
 }

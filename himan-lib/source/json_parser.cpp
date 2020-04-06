@@ -36,8 +36,8 @@ producer ParseTargetProducer(const shared_ptr<configuration>& conf, const boost:
 vector<forecast_type> ParseForecastTypes(const boost::property_tree::ptree& pt);
 unique_ptr<grid> ParseAreaAndGrid(const std::shared_ptr<configuration>& conf, const boost::property_tree::ptree& pt);
 vector<forecast_time> ParseTime(std::shared_ptr<configuration> conf, const boost::property_tree::ptree& pt);
-tuple<HPWriteMode, bool, bool> ParseWriteMode(const shared_ptr<configuration>& conf,
-                                              const boost::property_tree::ptree& pt);
+tuple<HPWriteMode, bool, bool, string> ParseWriteMode(const shared_ptr<configuration>& conf,
+                                                      const boost::property_tree::ptree& pt);
 
 vector<level> LevelsFromString(const string& levelType, const string& levelValues);
 
@@ -122,6 +122,7 @@ vector<shared_ptr<plugin_configuration>> json_parser::ParseConfigurationFile(sha
 		conf->WriteMode(get<0>(parsed));
 		conf->WriteToDatabase(get<1>(parsed));
 		conf->LegacyWriteMode(get<2>(parsed));
+		conf->FilenameTemplate(get<3>(parsed));
 	}
 
 	/* Check file_compression */
@@ -353,6 +354,40 @@ vector<shared_ptr<plugin_configuration>> json_parser::ParseConfigurationFile(sha
 		throw runtime_error(string("Error parsing key dynamic_memory_allocation: ") + e.what());
 	}
 
+	/* Check storage_type */
+
+	try
+	{
+		string theStorageType = pt.get<string>("write_storage_type");
+
+		conf->WriteStorageType(HPStringToFileStorageType.at(theStorageType));
+	}
+	catch (boost::property_tree::ptree_bad_path& e)
+	{
+		// Something was not found; do nothing
+	}
+	catch (exception& e)
+	{
+		throw runtime_error(string("Error parsing key storage_type: ") + e.what());
+	}
+
+	/* Check packing_type */
+
+	try
+	{
+		const string thePackingType = pt.get<string>("file_packing_type");
+
+		conf->PackingType(HPStringToPackingType.at(thePackingType));
+	}
+	catch (boost::property_tree::ptree_bad_path& e)
+	{
+		// Something was not found; do nothing
+	}
+	catch (exception& e)
+	{
+		throw runtime_error(string("Error parsing key storage_type: ") + e.what());
+	}
+
 	/*
 	 * Check processqueue.
 	 *
@@ -518,13 +553,16 @@ vector<shared_ptr<plugin_configuration>> json_parser::ParseConfigurationFile(sha
 		HPWriteMode delayedWriteMode = conf->WriteMode();
 		bool delayedWriteToDatabase = conf->WriteToDatabase();
 		bool delayedLegacyWriteMode = conf->LegacyWriteMode();
+		string delayedFilenameTemplate = conf->FilenameTemplate();
 		auto delayedParsed = ParseWriteMode(conf, element.second);
+		auto delayedPackingType = conf->PackingType();
 
 		if (get<0>(delayedParsed) != kUnknown)
 		{
 			delayedWriteMode = get<0>(delayedParsed);
 			delayedWriteToDatabase = get<1>(delayedParsed);
 			delayedLegacyWriteMode = get<2>(delayedParsed);
+			delayedFilenameTemplate = get<3>(delayedParsed);
 		}
 
 		// Check local forecast_type option
@@ -560,6 +598,23 @@ vector<shared_ptr<plugin_configuration>> json_parser::ParseConfigurationFile(sha
 		{
 		}
 
+		/* Check local packing_type option */
+
+		try
+		{
+			const string thePackingType = pt.get<string>("file_packing_type");
+
+			delayedPackingType = HPStringToPackingType.at(thePackingType);
+		}
+		catch (boost::property_tree::ptree_bad_path& e)
+		{
+			// Something was not found; do nothing
+		}
+		catch (exception& e)
+		{
+			throw runtime_error(string("Error parsing key storage_type: ") + e.what());
+		}
+
 		if (plugins.empty())
 		{
 			throw runtime_error(ClassName() + ": plugin definitions not found");
@@ -580,8 +635,10 @@ vector<shared_ptr<plugin_configuration>> json_parser::ParseConfigurationFile(sha
 			pc->WriteMode(delayedWriteMode);
 			pc->WriteToDatabase(delayedWriteToDatabase);
 			pc->LegacyWriteMode(delayedLegacyWriteMode);
+			pc->FilenameTemplate(delayedFilenameTemplate);
 			pc->SourceProducers(delayedSourceProducers);
 			pc->TargetProducer(delayedTargetProducer);
+			pc->PackingType(delayedPackingType);
 
 			if (plugin.second.empty())
 			{
@@ -1419,6 +1476,10 @@ vector<forecast_type> ParseForecastTypes(const boost::property_tree::ptree& pt)
 				{
 					forecastTypes.push_back(forecast_type(kAnalysis));
 				}
+				else if (type == "sp" || type == "statistical")
+				{
+					forecastTypes.push_back(forecast_type(kStatisticalProcessing));
+				}
 				else
 				{
 					throw runtime_error("Invalid forecast_type: " + type);
@@ -1441,8 +1502,8 @@ vector<forecast_type> ParseForecastTypes(const boost::property_tree::ptree& pt)
 	return forecastTypes;
 }
 
-tuple<HPWriteMode, bool, bool> ParseWriteMode(const shared_ptr<configuration>& conf,
-                                              const boost::property_tree::ptree& pt)
+tuple<HPWriteMode, bool, bool, string> ParseWriteMode(const shared_ptr<configuration>& conf,
+                                                      const boost::property_tree::ptree& pt)
 {
 	HPWriteMode writeMode = kUnknown;
 	bool writeToDatabase = false;
@@ -1530,5 +1591,21 @@ tuple<HPWriteMode, bool, bool> ParseWriteMode(const shared_ptr<configuration>& c
 		throw runtime_error(string("Error parsing meta information: ") + e.what());
 	}
 
-	return make_tuple(writeMode, writeToDatabase, legacyWriteMode);
+	// filename template
+
+	string filenameTemplate("");
+	try
+	{
+		filenameTemplate = pt.get<string>("filename_template");
+	}
+	catch (boost::property_tree::ptree_bad_path& e)
+	{
+		// Something was not found; do nothing
+	}
+	catch (exception& e)
+	{
+		throw runtime_error(string("Error parsing meta information: ") + e.what());
+	}
+
+	return make_tuple(writeMode, writeToDatabase, legacyWriteMode, filenameTemplate);
 }

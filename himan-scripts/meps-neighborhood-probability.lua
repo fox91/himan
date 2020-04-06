@@ -11,13 +11,11 @@ function produceProbabilities(sourceparam, targetparam, op, limit)
   local datas = {}
   local producer = configuration:GetSourceProducer(0)
   local ensemble_size = tonumber(radon:GetProducerMetaData(producer, "ensemble size"))
-  local steps = 2
-  local lag = 6
 
   logger:Info("Producing area probabilities for " .. sourceparam:GetName())
 
-  local ens = lagged_ensemble(sourceparam, ensemble_size, time_duration(HPTimeResolution.kHourResolution, -lag), steps)
-  ens:SetMaximumMissingForecasts(ensemble_size * steps)
+  local ens = lagged_ensemble(sourceparam, "MEPS_LAGGED_ENSEMBLE")
+  ens:SetMaximumMissingForecasts(ensemble_size)
 
   local curtime = forecast_time(current_time:GetOriginDateTime(), current_time:GetValidDateTime())
 
@@ -35,6 +33,12 @@ function produceProbabilities(sourceparam, targetparam, op, limit)
           reduced = ProbLimitGt2D(data:GetData(), mask, limit):GetValues()
         elseif op == "==" then
           reduced = ProbLimitEq2D(data:GetData(), mask, limit):GetValues()
+        end
+        mvals = 0
+        for k,v in pairs(reduced) do
+          if v == v then
+            reduced[k] = math.ceil(v)
+          end
         end
         datas[#datas+1] = reduced
       end
@@ -55,12 +59,17 @@ function produceProbabilities(sourceparam, targetparam, op, limit)
     prob[i] = MISS
 
     local tmp = 0
+    local cnt = 0
 
     for j=1,#datas do
-      tmp = tmp + datas[j][i]
+      local v = datas[j][i]
+      if v == v then
+        tmp = tmp + datas[j][i]
+        cnt = cnt + 1
+      end
     end
 
-    prob[i] = tmp / (#datas)
+    prob[i] = tmp / cnt
   end
 
   proctype = nil
@@ -79,6 +88,7 @@ function produceProbabilities(sourceparam, targetparam, op, limit)
     targetparam:SetAggregation(aggregation(HPAggregationType.kAccumulation, configuration:GetForecastStep()))
   end
 
+  result:SetForecastType(forecast_type(HPForecastType.kStatisticalProcessing))
   result:SetParam(targetparam)
   result:SetValues(prob)
 

@@ -176,11 +176,11 @@ shared_ptr<info<T>> fetcher::Fetch(shared_ptr<const plugin_configuration> config
 		bool found = false;
 
 		{
+			const auto uName = UniqueName(prod, requestedParam, requestedLevel);
 			lock_guard<mutex> lock(stickyMutex);
 
 			// Linear search, size of stickyParamCache should be relatively small
-			if (find(stickyParamCache.begin(), stickyParamCache.end(),
-			         UniqueName(prod, requestedParam, requestedLevel)) != stickyParamCache.end())
+			if (find(stickyParamCache.begin(), stickyParamCache.end(), uName) != stickyParamCache.end())
 			{
 				// oh,goody
 				found = true;
@@ -211,6 +211,15 @@ shared_ptr<info<T>> fetcher::Fetch(shared_ptr<const plugin_configuration> config
 
 			if (ret)
 			{
+				const auto uName = UniqueName(prod, requestedParam, requestedLevel);
+
+				lock_guard<mutex> lock(stickyMutex);
+				if (find(stickyParamCache.begin(), stickyParamCache.end(), uName) == stickyParamCache.end())
+				{
+					itsLogger.Trace("Updating sticky param cache: " + UniqueName(opts.prod, opts.param, opts.level));
+					stickyParamCache.push_back(uName);
+				}
+
 				break;
 			}
 		}
@@ -608,15 +617,6 @@ vector<shared_ptr<info<T>>> fetcher::FetchFromDatabase(search_options& opts, boo
 				dynamic_pointer_cast<const plugin_configuration>(opts.configuration)
 				    ->Statistics()
 				    ->AddToCacheMissCount(1);
-			}
-
-			auto uName = UniqueName(opts.prod, opts.param, opts.level);
-
-			lock_guard<mutex> lock(stickyMutex);
-			if (find(stickyParamCache.begin(), stickyParamCache.end(), uName) == stickyParamCache.end())
-			{
-				itsLogger.Trace("Updating sticky param cache: " + UniqueName(opts.prod, opts.param, opts.level));
-				stickyParamCache.push_back(uName);
 			}
 
 			return ret;

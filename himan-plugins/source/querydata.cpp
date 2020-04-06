@@ -401,9 +401,9 @@ template <typename T>
 himan::file_information querydata::ToFile(info<T>& theInfo)
 {
 	file_information finfo;
-	finfo.file_location = util::MakeFileName(theInfo, *itsWriteOptions.configuration) + ".fqd";
+	finfo.file_location = util::MakeFileName(theInfo, *itsWriteOptions.configuration);
 	finfo.file_type = kQueryData;
-	finfo.storage_type = kLocalFileSystem;
+	finfo.storage_type = itsWriteOptions.configuration->WriteStorageType();
 
 	boost::filesystem::path pathname(finfo.file_location);
 
