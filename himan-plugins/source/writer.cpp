@@ -56,7 +56,7 @@ himan::file_information writer::CreateFile(info<T>& theInfo, std::shared_ptr<con
 
 			//theOutputFile += ".nc4";
 
-			return theNetcdfWriter->ToFile<T>(theInfo, theOutputFile);
+			//return theNetcdfWriter->ToFile<T>(theInfo);
 		}
 		case kCSV:
 		{
