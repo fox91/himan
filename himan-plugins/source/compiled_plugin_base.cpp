@@ -414,14 +414,14 @@ void compiled_plugin_base::Start()
 	SetInitialIteratorPositions();
 	itsBaseLogger.Info("Plugin is using data type: " + TypeToName<T>());
 
-	//------------------------------------------------------------------------------------------------
+	/*//------------------------------------------------------------------------------------------------
         if(itsConfiguration->OutputFileType() == kNetCDF)
         {
                 auto n = GET_PLUGIN(netcdf4);
 		n->InitFile(*baseInfo, util::MakeFileName(itsConfiguration->FileWriteOption(), *baseInfo, *itsConfiguration));
         }
 	//------------------------------------------------------------------------------------------------
-
+	*/
 	vector<thread> threads;
 
 	for (short i = 0; i < itsThreadCount; i++)
