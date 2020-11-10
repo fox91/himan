@@ -621,7 +621,7 @@ double util::ToPower(double value, double power)
 }
 
 template <typename T>
-pair<matrix<T>, matrix<T>> util::CentralDifference(matrix<T>& A, vector<T>& dx, vector<T>& dy)
+pair<matrix<T>, matrix<T>> util::CentralDifference(matrix<T>& A, vector<T>& dx, vector<T>& dy, bool jPositive)
 {
 	matrix<T> dA_dx(A.SizeX(), A.SizeY(), 1, A.MissingValue());
 	matrix<T> dA_dy(A.SizeX(), A.SizeY(), 1, A.MissingValue());
@@ -631,82 +631,62 @@ pair<matrix<T>, matrix<T>> util::CentralDifference(matrix<T>& A, vector<T>& dx, 
 
 	ASSERT(dy.size() == A.SizeX() && dx.size() == A.SizeY());
 
-	// calculate for inner field
-	for (int j = 1; j < ASizeY - 1; ++j)  // rows
+	// compute x-derivative
+	for (int j = 0; j < ASizeY; ++j)
 	{
+		T dxj = jPositive ? dx[j] : dx[ASizeY - 1 - j];
 		for (int i = 1; i < ASizeX - 1; ++i)  // columns
 		{
 			dA_dx.Set(i, j, 0,
-			          (A.At(i + 1, j, 0) - A.At(i - 1, j, 0)) / (2 * dx[j]));  // central difference in x-direction
-			dA_dy.Set(i, j, 0,
-			          (A.At(i, j + 1, 0) - A.At(i, j - 1, 0)) / (2 * dy[i]));  // central difference in y-direction
+			          (A.At(i + 1, j, 0) - A.At(i - 1, j, 0)) / (2 * dxj));  // central difference in x-direction
+		}
+
+		// left boundary
+		dA_dx.Set(0, j, 0, (A.At(1, j, 0) - A.At(0, j, 0)) / dxj);  // forward difference in x-direction
+
+		// right boundary
+		dA_dx.Set(ASizeX - 1, j, 0,
+		          (A.At(ASizeX - 1, j, 0) - A.At(ASizeX - 2, j, 0)) / dxj);  // backward difference in x-direction
+	}
+
+	if (jPositive)
+	{
+		for (int i = 0; i < ASizeX; ++i)
+		{
+			for (int j = 1; j < ASizeY - 1; ++j)
+			{
+				dA_dy.Set(i, j, 0,
+				          (A.At(i, j + 1, 0) - A.At(i, j - 1, 0)) / (2 * dy[i]));  // central difference in y-direction
+			}
+			dA_dy.Set(i, 0, 0, (A.At(i, 1, 0) - A.At(i, 0, 0)) / dy[i]);  // forward difference in y-direction
+			dA_dy.Set(i, ASizeY - 1, 0,
+			          (A.At(i, ASizeY - 1, 0) - A.At(i, ASizeY - 2, 0)) / dy[i]);  // backward difference in y-direction
 		}
 	}
-
-	// treat boundaries separately
-	for (int i = 1; i < ASizeX - 1; ++i)  // rows
+	else
 	{
-		// calculate for upper boundary
-		dA_dx.Set(i, 0, 0, (A.At(i + 1, 0, 0) - A.At(i - 1, 0, 0)) / (2 * dx[0]));  // central difference in x-direction
-		dA_dy.Set(i, 0, 0, (A.At(i, 1, 0) - A.At(i, 0, 0)) / dy[i]);  // foreward difference in y-direction
-
-		// calculate for lower boundary
-		dA_dx.Set(i, ASizeY - 1, 0,
-		          (A.At(i + 1, ASizeY - 1, 0) - A.At(i - 1, ASizeY - 1, 0)) /
-		              (2 * dx[ASizeY - 1]));  // central difference in x-direction
-		dA_dy.Set(i, ASizeY - 1, 0,
-		          (A.At(i, ASizeY - 1, 0) - A.At(i, ASizeY - 2, 0)) / dy[i]);  // backward difference in y-direction
+		for (int i = 0; i < ASizeX; ++i)
+		{
+			for (int j = 1; j < ASizeY - 1; ++j)
+			{
+				dA_dy.Set(i, j, 0,
+				          -(A.At(i, j + 1, 0) - A.At(i, j - 1, 0)) / (2 * dy[i]));  // central difference in y-direction
+			}
+			dA_dy.Set(i, 0, 0, -(A.At(i, 1, 0) - A.At(i, 0, 0)) / dy[i]);  // forward difference in y-direction
+			dA_dy.Set(
+			    i, ASizeY - 1, 0,
+			    -(A.At(i, ASizeY - 1, 0) - A.At(i, ASizeY - 2, 0)) / dy[i]);  // backward difference in y-direction
+		}
 	}
-
-	for (int j = 1; j < ASizeY - 1; ++j)  // columns
-	{
-		// calculate for left boundary
-		dA_dx.Set(0, j, 0, (A.At(1, j, 0) - A.At(0, j, 0)) / dx[j]);  // foreward difference in x-direction
-		dA_dy.Set(0, j, 0, (A.At(0, j + 1, 0) - A.At(0, j - 1, 0)) / (2 * dy[0]));  // central difference in y-direction
-
-		// calculate for right boundary
-		dA_dx.Set(ASizeX - 1, j, 0,
-		          (A.At(ASizeX - 1, j, 0) - A.At(ASizeX - 2, j, 0)) / dx[j]);  // backward difference in x-direction
-		dA_dy.Set(ASizeX - 1, j, 0,
-		          (A.At(ASizeX - 1, j + 1, 0) - A.At(ASizeX - 1, j - 1, 0)) /
-		              (2 * dy[ASizeX - 1]));  // central difference in y-direction
-	}
-
-	// corner values last
-	// top left
-	dA_dx.Set(0, 0, 0, (A.At(1, 0, 0) - A.At(0, 0, 0)) / dx[0]);  // foreward difference in x-direction
-	dA_dy.Set(0, 0, 0, (A.At(0, 1, 0) - A.At(0, 0, 0)) / dy[0]);  // foreward difference in y-direction
-
-	// top right
-	dA_dx.Set(ASizeX - 1, 0, 0,
-	          (A.At(ASizeX - 1, 0, 0) - A.At(ASizeX - 2, 0, 0)) / dx[0]);  // foreward difference in x-direction
-	dA_dy.Set(
-	    ASizeX - 1, 0, 0,
-	    (A.At(ASizeX - 1, 1, 0) - A.At(ASizeX - 1, 0, 0)) / dy[ASizeX - 1]);  // backward difference in y-direction
-
-	// bottom left
-	dA_dx.Set(
-	    0, ASizeY - 1, 0,
-	    (A.At(1, ASizeY - 1, 0) - A.At(0, ASizeY - 1, 0)) / dx[ASizeY - 1]);  // foreward difference in x-direction
-	dA_dy.Set(0, ASizeY - 1, 0,
-	          (A.At(0, ASizeY - 1, 0) - A.At(0, ASizeY - 2, 0)) / dy[0]);  // backward difference in y-direction
-
-	// bottom right
-	dA_dx.Set(ASizeX - 1, ASizeY - 1, 0,
-	          (A.At(ASizeX - 1, ASizeY - 1, 0) - A.At(ASizeX - 2, ASizeY - 1, 0)) /
-	              dx[ASizeY - 1]);  // backward difference in x-direction
-	dA_dy.Set(ASizeX - 1, ASizeY - 1, 0,
-	          (A.At(ASizeX - 1, ASizeY - 1, 0) - A.At(ASizeX - 1, ASizeY - 2, 0)) /
-	              dy[ASizeX - 1]);  // backward difference in y-direction
 
 	pair<matrix<T>, matrix<T>> ret(dA_dx, dA_dy);
 	return ret;
 }
 
 template pair<matrix<double>, matrix<double>> util::CentralDifference<double>(matrix<double>& A, vector<double>& dx,
-                                                                              vector<double>& dy);
+                                                                              vector<double>& dy, bool jPositive);
 template pair<matrix<float>, matrix<float>> util::CentralDifference<float>(matrix<float>& A, vector<float>& dx,
-                                                                           vector<float>& dy);
+                                                                           vector<float>& dy, bool jPositive);
 
 double util::LatitudeLength(double phi)
 {
