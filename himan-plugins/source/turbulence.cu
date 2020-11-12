@@ -46,7 +46,7 @@ __global__ void TurbulenceKernel(const T* __restrict__ d_prevU, const T* __restr
 			dUdY = (d_U[idx+NX] - d_U[idx]) / d_dY[idx%NX];
 			dVdY = (d_V[idx+NX] - d_V[idx]) / d_dY[idx%NX];
 		}
-		else if (idx > NY*(NX-1)) // bottom boundary
+		else if (idx >= NX*(NY-1)) // bottom boundary
 		{
 			dUdY = (d_U[idx] - d_U[idx-NX]) / d_dY[idx%NX];
 			dVdY = (d_V[idx] - d_V[idx-NX]) / d_dY[idx%NX];
@@ -97,34 +97,33 @@ __global__ void TurbulenceKernel(const T* __restrict__ d_prevU, const T* __restr
 
 namespace turbulence_cuda
 {
-void Process(std::shared_ptr<const plugin_configuration> conf, std::shared_ptr<info<double>> myTargetInfo)
+void Process(std::shared_ptr<const plugin_configuration> conf, std::shared_ptr<info<float>> myTargetInfo)
 {
 
 	cudaStream_t stream;
 	CUDA_CHECK(cudaStreamCreate(&stream));
 
 	const size_t N = myTargetInfo->SizeLocations();
-	const size_t memsize = N * sizeof(double);
+	const size_t memsize = N * sizeof(float);
 
 	// Allocate device arrays
 
-	double* d_prevU = 0;
-	double* d_U = 0;
-	double* d_nextU = 0;
+	float* d_prevU = 0;
+	float* d_U = 0;
+	float* d_nextU = 0;
 
-	double* d_prevV = 0;
-	double* d_V = 0;
-	double* d_nextV = 0;
+	float* d_prevV = 0;
+	float* d_V = 0;
+	float* d_nextV = 0;
 
-	double* d_prevH = 0;
-	double* d_nextH = 0;
+	float* d_prevH = 0;
+	float* d_nextH = 0;
 
-	double* d_dx = 0;
-	double* d_dy = 0;
+	float* d_dx = 0;
+	float* d_dy = 0;
 
-        double* d_TI = 0;
-        double* d_TI2 = 0;
-
+        float* d_TI = 0;
+        float* d_TI2 = 0;
 
 	level forecastLevel = myTargetInfo->Level();
 	level prevLevel, nextLevel;
@@ -137,20 +136,19 @@ void Process(std::shared_ptr<const plugin_configuration> conf, std::shared_ptr<i
 	nextLevel.Value(myTargetInfo->Level().Value() + 1);
 	nextLevel.Index(nextLevel.Index() + 1);
 
-	auto prevUInfo = cuda::Fetch<double>(conf, myTargetInfo->Time(), prevLevel, param("U-MS"), myTargetInfo->ForecastType());
-        auto UInfo = cuda::Fetch<double>(conf, myTargetInfo->Time(), forecastLevel, param("U-MS"), myTargetInfo->ForecastType());
-        auto nextUInfo = cuda::Fetch<double>(conf, myTargetInfo->Time(), nextLevel, param("U-MS"), myTargetInfo->ForecastType());
+	auto prevUInfo = cuda::Fetch<float>(conf, myTargetInfo->Time(), prevLevel, param("U-MS"), myTargetInfo->ForecastType());
+        auto UInfo = cuda::Fetch<float>(conf, myTargetInfo->Time(), forecastLevel, param("U-MS"), myTargetInfo->ForecastType());
+        auto nextUInfo = cuda::Fetch<float>(conf, myTargetInfo->Time(), nextLevel, param("U-MS"), myTargetInfo->ForecastType());
 
-        auto prevVInfo = cuda::Fetch<double>(conf, myTargetInfo->Time(), prevLevel, param("V-MS"), myTargetInfo->ForecastType());
-        auto VInfo = cuda::Fetch<double>(conf, myTargetInfo->Time(), forecastLevel, param("V-MS"), myTargetInfo->ForecastType());
-        auto nextVInfo = cuda::Fetch<double>(conf, myTargetInfo->Time(), nextLevel, param("V-MS"), myTargetInfo->ForecastType());
+        auto prevVInfo = cuda::Fetch<float>(conf, myTargetInfo->Time(), prevLevel, param("V-MS"), myTargetInfo->ForecastType());
+        auto VInfo = cuda::Fetch<float>(conf, myTargetInfo->Time(), forecastLevel, param("V-MS"), myTargetInfo->ForecastType());
+        auto nextVInfo = cuda::Fetch<float>(conf, myTargetInfo->Time(), nextLevel, param("V-MS"), myTargetInfo->ForecastType());
 
-        auto prevHInfo = cuda::Fetch<double>(conf, myTargetInfo->Time(), prevLevel, param("HL-M"), myTargetInfo->ForecastType());
-        auto HInfo = cuda::Fetch<double>(conf, myTargetInfo->Time(), forecastLevel, param("HL-M"), myTargetInfo->ForecastType());
-        auto nextHInfo = cuda::Fetch<double>(conf, myTargetInfo->Time(), nextLevel, param("HL-M"), myTargetInfo->ForecastType());
+        auto prevHInfo = cuda::Fetch<float>(conf, myTargetInfo->Time(), prevLevel, param("HL-M"), myTargetInfo->ForecastType());
+        auto nextHInfo = cuda::Fetch<float>(conf, myTargetInfo->Time(), nextLevel, param("HL-M"), myTargetInfo->ForecastType());
 
 
-	if (!prevUInfo || !UInfo || !nextUInfo || !prevVInfo || !VInfo || !nextVInfo || !prevHInfo || !HInfo || !nextHInfo)
+	if (!prevUInfo || !UInfo || !nextUInfo || !prevVInfo || !VInfo || !nextVInfo || !prevHInfo || !nextHInfo)
 	{
 		return;
 	}
@@ -171,17 +169,16 @@ void Process(std::shared_ptr<const plugin_configuration> conf, std::shared_ptr<i
 	CUDA_CHECK(cudaMalloc((void**)&d_TI, memsize));
 	CUDA_CHECK(cudaMalloc((void**)&d_TI2, memsize));
 
+	cuda::PrepareInfo<float>(prevUInfo, d_prevU, stream, conf->UseCacheForReads());
+	cuda::PrepareInfo<float>(UInfo, d_U, stream, conf->UseCacheForReads());
+        cuda::PrepareInfo<float>(nextUInfo, d_nextU, stream, conf->UseCacheForReads());
 
-	cuda::PrepareInfo<double>(prevUInfo, d_prevU, stream, conf->UseCacheForReads());
-	cuda::PrepareInfo<double>(UInfo, d_U, stream, conf->UseCacheForReads());
-        cuda::PrepareInfo<double>(nextUInfo, d_nextU, stream, conf->UseCacheForReads());
+        cuda::PrepareInfo<float>(prevVInfo, d_prevV, stream, conf->UseCacheForReads());
+        cuda::PrepareInfo<float>(VInfo, d_V, stream, conf->UseCacheForReads());
+        cuda::PrepareInfo<float>(nextVInfo, d_nextV, stream, conf->UseCacheForReads());
 
-        cuda::PrepareInfo<double>(prevVInfo, d_prevV, stream, conf->UseCacheForReads());
-        cuda::PrepareInfo<double>(VInfo, d_V, stream, conf->UseCacheForReads());
-        cuda::PrepareInfo<double>(nextVInfo, d_nextV, stream, conf->UseCacheForReads());
-
-        cuda::PrepareInfo<double>(prevHInfo, d_prevH, stream, conf->UseCacheForReads());
-        cuda::PrepareInfo<double>(nextHInfo, d_nextH, stream, conf->UseCacheForReads());
+        cuda::PrepareInfo<float>(prevHInfo, d_prevH, stream, conf->UseCacheForReads());
+        cuda::PrepareInfo<float>(nextHInfo, d_nextH, stream, conf->UseCacheForReads());
 
 	// calculate grid spacing
 	//-------------------------------------------------------------------------------
@@ -189,8 +186,8 @@ void Process(std::shared_ptr<const plugin_configuration> conf, std::shared_ptr<i
 
 	auto gr = std::dynamic_pointer_cast<regular_grid>(myTargetInfo->Grid());
 
-	const double Di = gr->Di();
-	const double Dj = gr->Dj();
+	const float Di = gr->Di();
+	const float Dj = gr->Dj();
 	point firstPoint = myTargetInfo->Grid()->FirstPoint();
 
 	const size_t Ni = gr->Ni();
@@ -210,14 +207,14 @@ void Process(std::shared_ptr<const plugin_configuration> conf, std::shared_ptr<i
                 exit(1);
         }
 
-	std::vector<double> dx, dy;
+	std::vector<float> dx, dy;
 
 	switch (UInfo->Grid()->Type())
 	{
 		case kLambertConformalConic:
 		{
-			dx = std::vector<double>(Nj, Di);
-			dy = std::vector<double>(Ni, Dj);
+			dx = std::vector<float>(Nj, Di);
+			dy = std::vector<float>(Ni, Dj);
 			break;
 		};
 		case kRotatedLatitudeLongitude:
@@ -226,36 +223,34 @@ void Process(std::shared_ptr<const plugin_configuration> conf, std::shared_ptr<i
 			// fall through
 		case kLatitudeLongitude:
 		{
-			dx = std::vector<double>(Nj, MissingDouble());
-			dy = std::vector<double>(Ni, MissingDouble());
+			dx = std::vector<float>(Nj, MissingFloat());
+			dy = std::vector<float>(Ni, MissingFloat());
 
 			for (size_t i = 0; i < Ni; ++i)
 			{
-				dy[i] = util::LatitudeLength(0) * Dj / 360;
+				dy[i] = util::LatitudeLength(0.0f) * Dj / 360.0f;
 			}
 
 			for (size_t j = 0; j < Nj; ++j)
 			{
-				dx[j] = util::LatitudeLength(firstPoint.Y() + double(j) * Dj) * Di / 360;
+				dx[j] = util::LatitudeLength(static_cast<float>(firstPoint.Y()) + static_cast<float>(j) * Dj) * Di / 360.0f;
 			}
 			break;
 		}
 		default:
 		{
-			exit(1);
+			himan::Abort();
 		}
 	}
 
 	if(!jPositive)
 		std::reverse(dx.begin(),dx.end());
 
-	CUDA_CHECK(cudaMalloc((void**)&d_dx, Nj * sizeof(double)));
-	CUDA_CHECK(cudaMalloc((void**)&d_dy, Ni * sizeof(double)));
+	CUDA_CHECK(cudaMalloc((void**)&d_dx, Nj * sizeof(float)));
+	CUDA_CHECK(cudaMalloc((void**)&d_dy, Ni * sizeof(float)));
 
-	CUDA_CHECK(cudaMemcpyAsync(d_dx, dx.data(), Nj * sizeof(double), cudaMemcpyHostToDevice, stream));
-	CUDA_CHECK(cudaMemcpyAsync(d_dy, dy.data(), Ni * sizeof(double), cudaMemcpyHostToDevice, stream));
-
-        CUDA_CHECK(cudaStreamSynchronize(stream));
+	CUDA_CHECK(cudaMemcpyAsync(d_dx, dx.data(), Nj * sizeof(float), cudaMemcpyHostToDevice, stream));
+	CUDA_CHECK(cudaMemcpyAsync(d_dy, dy.data(), Ni * sizeof(float), cudaMemcpyHostToDevice, stream));
 
 	//----------------------------------------------------------------------------
 	// end grid spacing calculations
@@ -266,15 +261,15 @@ void Process(std::shared_ptr<const plugin_configuration> conf, std::shared_ptr<i
 	const int blockSize = 512;
 	const int gridSize = N / blockSize + (N % blockSize == 0 ? 0 : 1);
 
-	TurbulenceKernel<double><<<gridSize, blockSize, 0, stream>>>(d_prevU, d_U, d_nextU, d_prevV, d_V, d_nextV, d_prevH, d_nextH, d_dx, d_dy, d_TI, d_TI2, Ni, Nj, jPositive);
+	TurbulenceKernel<float><<<gridSize, blockSize, 0, stream>>>(d_prevU, d_U, d_nextU, d_prevV, d_V, d_nextV, d_prevH, d_nextH, d_dx, d_dy, d_TI, d_TI2, Ni, Nj, jPositive);
 
 	//----------------------------------------------------------------------------
 
 	myTargetInfo->Index<param>(0);
-	cuda::ReleaseInfo<double>(myTargetInfo, d_TI, stream);
+	cuda::ReleaseInfo<float>(myTargetInfo, d_TI, stream);
 
 	myTargetInfo->Index<param>(1);
-        cuda::ReleaseInfo<double>(myTargetInfo, d_TI2, stream);
+        cuda::ReleaseInfo<float>(myTargetInfo, d_TI2, stream);
 
 
         // "SetAB"
@@ -285,7 +280,7 @@ void Process(std::shared_ptr<const plugin_configuration> conf, std::shared_ptr<i
 
                 for (myTargetInfo->Reset<param>(); myTargetInfo->Next<param>();)
                 {
-                        myTargetInfo->Set<level>(HInfo->Level());
+                        myTargetInfo->Set<level>(UInfo->Level());
                 }
 
                 myTargetInfo->Index<param>(paramIndex);
@@ -309,6 +304,8 @@ void Process(std::shared_ptr<const plugin_configuration> conf, std::shared_ptr<i
         CUDA_CHECK(cudaFree(d_prevH));
         CUDA_CHECK(cudaFree(d_nextH));
 
+	CUDA_CHECK(cudaFree(d_TI));
+	CUDA_CHECK(cudaFree(d_TI2));
 	CUDA_CHECK(cudaStreamDestroy(stream));
 }
 }

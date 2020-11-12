@@ -120,7 +120,8 @@ double round(double val, unsigned short numdigits);
  * @return Length of Latitude
  */
 
-double LatitudeLength(double phi);
+template <typename T>
+T LatitudeLength(T phi);
 
 /**
  * @brief Make SQL style interval value from forecast time

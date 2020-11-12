@@ -15,7 +15,7 @@ using namespace himan::plugin;
 namespace turbulence_cuda
 {
 extern void Process(std::shared_ptr<const himan::plugin_configuration> conf,
-                    std::shared_ptr<himan::info<double>> myTargetInfo);
+                    std::shared_ptr<himan::info<float>> myTargetInfo);
 }
 #endif
 
@@ -49,7 +49,7 @@ void turbulence::Process(std::shared_ptr<const plugin_configuration> conf)
 
 	SetParams({TI, TI2});
 
-	Start();
+	Start<float>();
 }
 
 /*
@@ -58,7 +58,7 @@ void turbulence::Process(std::shared_ptr<const plugin_configuration> conf)
  * This function does the actual calculation.
  */
 
-void turbulence::Calculate(info_t myTargetInfo, unsigned short threadIndex)
+void turbulence::Calculate(shared_ptr<info<float>> myTargetInfo, unsigned short threadIndex)
 {
 	/*
 	 * Required source parameters
@@ -103,19 +103,19 @@ void turbulence::Calculate(info_t myTargetInfo, unsigned short threadIndex)
 	else
 #endif
 	{
-		info_t UInfo, VInfo, HInfo, prevUInfo, prevVInfo, prevHInfo, nextUInfo, nextVInfo, nextHInfo;
+		shared_ptr<info<float>> UInfo, VInfo, HInfo, prevUInfo, prevVInfo, prevHInfo, nextUInfo, nextVInfo, nextHInfo;
 
-		prevHInfo = Fetch(forecastTime, prevLevel, HParam, forecastType, false);
-		prevUInfo = Fetch(forecastTime, prevLevel, UParam, forecastType, false);
-		prevVInfo = Fetch(forecastTime, prevLevel, VParam, forecastType, false);
+		prevHInfo = Fetch<float>(forecastTime, prevLevel, HParam, forecastType, false);
+		prevUInfo = Fetch<float>(forecastTime, prevLevel, UParam, forecastType, false);
+		prevVInfo = Fetch<float>(forecastTime, prevLevel, VParam, forecastType, false);
 
-		nextHInfo = Fetch(forecastTime, nextLevel, HParam, forecastType, false);
-		nextUInfo = Fetch(forecastTime, nextLevel, UParam, forecastType, false);
-		nextVInfo = Fetch(forecastTime, nextLevel, VParam, forecastType, false);
+		nextHInfo = Fetch<float>(forecastTime, nextLevel, HParam, forecastType, false);
+		nextUInfo = Fetch<float>(forecastTime, nextLevel, UParam, forecastType, false);
+		nextVInfo = Fetch<float>(forecastTime, nextLevel, VParam, forecastType, false);
 
-		HInfo = Fetch(forecastTime, forecastLevel, HParam, forecastType, false);
-		UInfo = Fetch(forecastTime, forecastLevel, UParam, forecastType, false);
-		VInfo = Fetch(forecastTime, forecastLevel, VParam, forecastType, false);
+		HInfo = Fetch<float>(forecastTime, forecastLevel, HParam, forecastType, false);
+		UInfo = Fetch<float>(forecastTime, forecastLevel, UParam, forecastType, false);
+		VInfo = Fetch<float>(forecastTime, forecastLevel, VParam, forecastType, false);
 
 		if (!(prevHInfo && prevUInfo && prevVInfo && nextHInfo && nextUInfo && nextVInfo && HInfo && UInfo && VInfo))
 		{
@@ -138,21 +138,21 @@ void turbulence::Calculate(info_t myTargetInfo, unsigned short threadIndex)
 
 		auto gr = dynamic_pointer_cast<regular_grid>(myTargetInfo->Grid());
 
-		const double Di = gr->Di();
-		const double Dj = gr->Dj();
+		const float Di = static_cast<float>(gr->Di());
+		const float Dj = static_cast<float>(gr->Dj());
 		point firstPoint = myTargetInfo->Grid()->FirstPoint();
 
 		const size_t Ni = gr->Ni();
 		const size_t Nj = gr->Nj();
 
-		vector<double> dx, dy;
+		vector<float> dx, dy;
 
 		switch (UInfo->Grid()->Type())
 		{
 			case kLambertConformalConic:
 			{
-				dx = vector<double>(Nj, Di);
-				dy = vector<double>(Ni, Dj);
+				dx = vector<float>(Nj, Di);
+				dy = vector<float>(Ni, Dj);
 				break;
 			};
 			case kRotatedLatitudeLongitude:
@@ -162,24 +162,24 @@ void turbulence::Calculate(info_t myTargetInfo, unsigned short threadIndex)
 				// fall through
 			case kLatitudeLongitude:
 			{
-				dx = vector<double>(Nj, MissingDouble());
-				dy = vector<double>(Ni, MissingDouble());
+				dx = vector<float>(Nj, MissingFloat());
+				dy = vector<float>(Ni, MissingFloat());
 
 				for (size_t i = 0; i < Ni; ++i)
 				{
-					dy[i] = util::LatitudeLength(0) * Dj / 360;
+					dy[i] = util::LatitudeLength(0.0f) * Dj / 360.0f;
 				}
 
 				for (size_t j = 0; j < Nj; ++j)
 				{
-					dx[j] = util::LatitudeLength(firstPoint.Y() + double(j) * Dj) * Di / 360;
+					dx[j] = util::LatitudeLength(static_cast<float>(firstPoint.Y()) + float(j) * Dj) * Di / 360.0f;
 				}
 				break;
 			}
 			default:
 			{
 				myThreadedLogger.Error("Grid not supported for CAT calculation.");
-				exit(1);
+				himan::Abort();
 			}
 		}
 
@@ -195,41 +195,40 @@ void turbulence::Calculate(info_t myTargetInfo, unsigned short threadIndex)
 		else
 		{
 			myThreadedLogger.Error("Grid not supported for CAT calculation.");
-			exit(1);
+			himan::Abort();
 		}
 
-		pair<matrix<double>, matrix<double>> gradU = util::CentralDifference(UInfo->Data(), dx, dy, jPositive);
-		pair<matrix<double>, matrix<double>> gradV = util::CentralDifference(VInfo->Data(), dx, dy, jPositive);
+		pair<matrix<float>, matrix<float>> gradU = util::CentralDifference(UInfo->Data(), dx, dy, jPositive);
+		pair<matrix<float>, matrix<float>> gradV = util::CentralDifference(VInfo->Data(), dx, dy, jPositive);
 
 		LOCKSTEP(myTargetInfo, UInfo, VInfo, HInfo, prevUInfo, prevVInfo, prevHInfo, nextUInfo, nextVInfo, nextHInfo)
 		{
 			size_t index = myTargetInfo->LocationIndex();
-			double U = UInfo->Value();
-			double V = VInfo->Value();
-			double H = HInfo->Value();
-			double prevU = prevUInfo->Value();
-			double prevV = prevVInfo->Value();
-			double prevH = prevHInfo->Value();
-			double nextU = nextUInfo->Value();
-			double nextV = nextVInfo->Value();
-			double nextH = nextHInfo->Value();
+			float U = UInfo->Value();
+			float V = VInfo->Value();
+			float prevU = prevUInfo->Value();
+			float prevV = prevVInfo->Value();
+			float prevH = prevHInfo->Value();
+			float nextU = nextUInfo->Value();
+			float nextV = nextVInfo->Value();
+			float nextH = nextHInfo->Value();
 
-			if (IsMissingValue({U, V, H, prevU, prevV, prevH, nextU, nextV, nextH}))
+			if (IsMissingValue({U, V, prevU, prevV, prevH, nextU, nextV, nextH}))
 			{
 				continue;
 			}
 
 			// Precalculation of wind shear, deformation and convergence
-			double WS = sqrt(pow((prevU + U + nextU) / 3, 2) + pow((prevV + V + nextV) / 3, 2));
-			double VWS = sqrt(pow((nextU - prevU) / (nextH - prevH), 2) + pow((nextV - prevV) / (nextH - prevH), 2));
-			double DEF = sqrt(pow(get<0>(gradU).At(index) - get<1>(gradV).At(index), 2) +
-			                  pow(get<0>(gradV).At(index) + get<1>(gradU).At(index), 2));
-			double CVG = -get<0>(gradU).At(index) - get<1>(gradV).At(index);
+			float WS = sqrt(pow((prevU + U + nextU) / 3.0f, 2.0f) + pow((prevV + V + nextV) / 3.0f, 2.0f));
+			float VWS = sqrt(pow((nextU - prevU) / (nextH - prevH), 2.0f) + pow((nextV - prevV) / (nextH - prevH), 2.0f));
+			float DEF = sqrt(pow(get<0>(gradU).At(index) - get<1>(gradV).At(index), 2.0f) +
+			                  pow(get<0>(gradV).At(index) + get<1>(gradU).At(index), 2.0f));
+			float CVG = -get<0>(gradU).At(index) - get<1>(gradV).At(index);
 
 			// Calculate scaling factor
-			double S;
-			double ScaleMax = 40;
-			double ScaleMin = 10;
+			float S;
+			float ScaleMax = 40;
+			float ScaleMin = 10;
 			if (WS >= ScaleMax)
 			{
 				S = 1;
@@ -244,8 +243,8 @@ void turbulence::Calculate(info_t myTargetInfo, unsigned short threadIndex)
 			}
 
 			// Calculation of turbulence indices
-			double TI = S * VWS * DEF;
-			double TI2 = S * VWS * (DEF + CVG);
+			float TI = S * VWS * DEF;
+			float TI2 = S * VWS * (DEF + CVG);
 
 			// return result
 			myTargetInfo->Index<param>(0);

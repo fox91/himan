@@ -687,12 +687,14 @@ template pair<matrix<double>, matrix<double>> util::CentralDifference<double>(ma
                                                                               vector<double>& dy, bool jPositive);
 template pair<matrix<float>, matrix<float>> util::CentralDifference<float>(matrix<float>& A, vector<float>& dx,
                                                                            vector<float>& dy, bool jPositive);
-
-double util::LatitudeLength(double phi)
+template <typename T>
+T util::LatitudeLength(T phi)
 {
-	double cos_phi = cos(phi * constants::kDeg);
-	return 2 * boost::math::constants::pi<double>() * constants::kR * abs(cos_phi);
+	T cos_phi = cos(phi * static_cast<T>(constants::kDeg));
+	return 2 * boost::math::constants::pi<T>() * static_cast<float>(constants::kR) * abs(cos_phi);
 }
+template double util::LatitudeLength(double phi);
+template float util::LatitudeLength(float phi);
 
 double util::round(double val, unsigned short numdigits)
 {
