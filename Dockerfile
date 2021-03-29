@@ -1,34 +1,34 @@
-# Use CentOS 7 as baseline
-FROM centos:7
+FROM centos:8
 
-# Add Himan repository
-RUN echo -e "[himan]\nname=Himan\nbaseurl=https://download.fmi.fi/himan/rhel/7/x86_64\nenabled=1\ngpgcheck=0\n" > /etc/yum.repos.d/himan.repo
+RUN set -eux; \
+  # PostgreSQL
+  dnf -y module disable postgresql; \
+  dnf -y install https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm; \
+  # EPEL
+  dnf -y install epel-release; \
+  # DNF plugins
+  dnf -y install dnf-plugins-core; \
+  # PowerTools
+  dnf -y config-manager --set-enabled powertools; \
+  # FMI smartmet
+  dnf -y install https://download.fmi.fi/smartmet-open/rhel/8/x86_64/smartmet-open-release-21.3.26-2.el8.fmi.noarch.rpm; \
+  # Fix smartmet bugs
+  sed -i \
+    -e 's/proxy/#proxy/g' \
+    -e 's|8$basearch|8/$basearch|g' \
+    /etc/yum.repos.d/smartmet-open.repo
 
-# Add smartmet-open repository (newbase library)
-# Add epel repository
-# Add postgres 9.5 repo for libpqxx 5
+RUN set -eux; \
+  dnf -y install \
+    himan-bin \
+    himan-lib \
+    himan-plugins
 
-RUN rpm -ivh https://download.fmi.fi/smartmet-open/rhel/7/x86_64/smartmet-open-17.9.1-1.el7.fmi.noarch.rpm \
-             https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm \
-             https://download.postgresql.org/pub/repos/yum/9.5/redhat/rhel-7-x86_64/pgdg-centos95-9.5-3.noarch.rpm
+# Example code
+WORKDIR /app
 
-# Install Himan and dependencies
-RUN yum -y install \
-	himan-bin \
-	himan-lib \
-	himan-plugins \
-	wget
+COPY ./example/seaicing/seaicing.json ./
+COPY ./example/seaicing/param-file.txt ./
+COPY ./example/seaicing/seaicing.grib ./
 
-# Run example from Himan documentation
-# Store example input files to container root as we mount /tmp from host
-
-WORKDIR /
-
-RUN wget \
-	https://raw.githubusercontent.com/fmidev/himan/master/example/seaicing/seaicing.json \
-	https://raw.githubusercontent.com/fmidev/himan/master/example/seaicing/param-file.txt \
-	https://github.com/fmidev/himan/raw/master/example/seaicing/seaicing.grib
-
-WORKDIR /tmp
-
-CMD himan -f ../seaicing.json --no-database --param-file ../param-file.txt ../seaicing.grib
+CMD himan -f seaicing.json --no-database --param-file param-file.txt seaicing.grib
